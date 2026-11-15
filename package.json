@@ -1,0 +1,23 @@
+{
+  "name": "simple-tsumeshougi",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "license": "GPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "fetch:problems": "bash scripts/fetch-problems.sh",
+    "fetch:eval": "bash scripts/fetch-eval.sh",
+    "build:engine": "bash engine/build.sh",
+    "smoke:engine": "node scripts/engine-smoke.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.162.0"
+  }
+}

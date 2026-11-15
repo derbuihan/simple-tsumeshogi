@@ -1,0 +1,45 @@
+diff --git a/source/usi.cpp b/source/usi.cpp
+index 512e666..c021191 100644
+--- a/source/usi.cpp
++++ b/source/usi.cpp
+@@ -461,6 +461,10 @@ bool USIEngine::usi_cmdexec(const std::string& cmd) { // diff:ignore
+     else if (token == "moves")
+         moves();
+ 
++    // [simple-tsumeshougi] この局面での王手になる合法手をすべて出力
++    else if (token == "checks")
++        checks();
++
+     // オプションを取得する
+     else if (token == "getoption")
+         getoption(is);
+@@ -1527,6 +1531,17 @@ void USIEngine::moves() {
+     std::cout << std::endl;
+ }
+ 
++// [simple-tsumeshougi] "checks"コマンドのhandler
++// 合法手のうち相手玉に王手がかかる手だけを空白区切りで1行に出力する。
++// 自玉が王手されている局面でも正しく動くよう、LEGAL_ALLをgives_check()でフィルタする。
++void USIEngine::checks() {
++    auto& pos = engine.get_position();
++    for (auto m : MoveList<LEGAL_ALL>(pos))
++        if (pos.gives_check(m))
++            std::cout << m << ' ';
++    std::cout << std::endl;
++}
++
+ // "getoption"コマンドのhandler
+ // オプションの値を取得する。
+ void USIEngine::getoption(std::istringstream& is) {
+diff --git a/source/usi.h b/source/usi.h
+index 8ccd0b2..7981ff4 100644
+--- a/source/usi.h
++++ b/source/usi.h
+@@ -204,6 +204,7 @@ private:
+ 
+ 	void isready();
+     void moves();
++    void checks();
+     void getoption(std::istringstream& is);
+     void qsearch_psv(std::istringstream& is);
+     void unittest(std::istringstream& is);
