@@ -120,8 +120,27 @@ describe('selectProblem', () => {
     ]);
   });
 
-  it('ランダム: 乱数から ID を組み立てる', () => {
-    const r = selectProblem({ index, lengths: [3, 5], order: 'random', records: {}, cursor, random: seq(0.9, 0, 0.5) });
-    expect(r.id).toBe('mate5/000/1');
+  it('ランダム: 今の巻の中から選ぶ', () => {
+    const r = selectProblem({ index, lengths: [5], order: 'random', records: {}, cursor, random: seq(0, 0.5) });
+    expect(r.id).toMatch(/^mate5\/000\//);
+    expect(r.cursor.current).toEqual({ mate5: 0 });
+  });
+
+  it('今の巻は挑戦済みが半分になるまで使い続け、半分に達したら未着手の巻へ移る', () => {
+    const big: ProblemIndex = { mate3: { moves: 3, volumes: [1000, 1000, 1000] } };
+    const records: Records = {};
+    for (let i = 0; i < 499; i++) applyEvent(records, ev(`mate3/001/${i}`, 'fail'));
+    applyEvent(records, ev('mate3/000/0', 'fail'));
+    const c = { next: {}, lengthIndex: 0, current: { mate3: 1 } };
+    for (let k = 0; k < 20; k++) {
+      const r = selectProblem({ index: big, lengths: [3], order: 'untried', records, cursor: c });
+      expect(r.id).toMatch(/^mate3\/001\//);
+      expect(records[r.id]).toBeUndefined();
+    }
+    applyEvent(records, ev('mate3/001/499', 'fail'));
+    const r = selectProblem({ index: big, lengths: [3], order: 'untried', records, cursor: c });
+    // 001 は半分挑戦済み、000 は1問挑戦済み → 未着手の 002 へ
+    expect(r.id).toMatch(/^mate3\/002\//);
+    expect(r.cursor.current).toEqual({ mate3: 2 });
   });
 });

@@ -1,5 +1,5 @@
 /**
- * /api/history のハンドラ。Pages Functions（本番）と Vite 開発サーバー（ローカル）で共有する。
+ * /api/history のハンドラ。Worker（worker/index.ts）から呼ばれる。
  *
  *   GET  /api/history                  → { records }
  *   POST /api/history { events: [...] } → { records, applied }

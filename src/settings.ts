@@ -19,10 +19,14 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = { lengths: [3, 5, 7], order: 'untried', showLength: false, variant: 'mini' };
 
-/** 番号順出題の現在位置（手数ごと）と、次に出す手数の位置 */
+/** 出題の現在位置 */
 export interface Cursor {
+  /** 番号順: 手数ごとの次の問題 */
   next: Record<string, { volume: number; line: number }>;
+  /** 番号順: 次に出す手数の位置 */
   lengthIndex: number;
+  /** 未挑戦優先・ランダム: 手数ごとの「今の巻」 */
+  current?: Record<string, number>;
 }
 
 const SETTINGS_KEY = 'tsume.settings.v1';

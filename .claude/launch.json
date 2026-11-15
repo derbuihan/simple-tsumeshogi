@@ -4,28 +4,8 @@
     {
       "name": "dev",
       "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "vite",
-        "--port",
-        "5173",
-        "--strictPort"
-      ],
+      "runtimeArgs": ["cf", "dev"],
       "port": 5173
-    },
-    {
-      "name": "wrangler",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": [
-        "wrangler",
-        "pages",
-        "dev",
-        "dist",
-        "--port",
-        "8788",
-        "--persist-to",
-        ".cache/wrangler-state"
-      ],
-      "port": 8788
     }
   ]
 }

@@ -1,5 +1,5 @@
 /**
- * 解答履歴。ブラウザ（src/history/store.ts）と Pages Functions（functions/api/history.ts）で共有する。
+ * 解答履歴。ブラウザ（src/history/store.ts）と Worker（worker/index.ts）で共有する。
  * 依存の無い純粋な TypeScript に保つこと。
  */
 

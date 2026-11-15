@@ -9,7 +9,7 @@
 - PC・スマートフォン対応の1画面UI（TypeScript + Vite、フレームワークなし）
 - 問題：3・5・7・9・11手詰 約500万問
 - 玉方・詰み判定：やねうら王 + つようら王11mini（設定で11micro）
-- 履歴：Cloudflare Workers KV、配信：Cloudflare Pages + Access
+- 配信：Cloudflare Workers（静的アセット）+ Access、問題データ：R2、履歴：Workers KV
 
 ## セットアップ
 
@@ -20,8 +20,25 @@ npm install
 npm run dev
 ```
 
-ビルド済みのエンジン（`public/engine/`）と問題データ（`data/problems/`）はリポジトリに含まれています。
-本番では問題データを Cloudflare にアップロードせず、[jsDelivr](https://www.jsdelivr.com/) 経由で GitHub のタグ固定版（`problems-vN`、`.env.production` で指定）から読み込みます。開発サーバーではローカルの `data/problems/` を読みます。
+ビルド済みのエンジン（`public/engine/`）はリポジトリに含まれています。
+問題データ（約600MB）はリポジトリに含めず、R2 に置きます。開発時は次のコマンドで手元の `data/problems/` に取得してください。
+
+```bash
+npm run fetch:problems   # shogimate から取得（public/problems-index.json も再生成）
+```
+
+`npm run dev` は [`cf dev`](https://developers.cloudflare.com/cf/)（Vite + Cloudflare Vite プラグイン）で、Worker・KV・R2 をローカルで再現して起動します。
+開発時の問題データはローカルの `data/problems/` を直接読みます（`.env.development`）。本番では Worker が R2 から `/problems/` で返します。
+
+### デプロイ
+
+アプリは Workers Builds（GitHub 連携）で、`main` への push ごとに Cloudflare 側でビルド・デプロイされます（ビルド: `npm run build`、デプロイ: `npx cf deploy --prebuilt`）。
+
+問題データの R2 へのアップロードは、データを変えたときだけ手元から行います。
+
+```bash
+npm run upload:problems   # data/problems/ を R2 にアップロード
+```
 
 ### エンジンを再ビルドする場合
 
@@ -34,10 +51,9 @@ npm run build:engine -- mini      # micro も同様
 npm run smoke:engine -- mini 3 2000
 ```
 
-### データを取り直す場合
+### 評価関数を取り直す場合
 
 ```bash
-npm run fetch:problems   # shogimate から問題データを取得し public/problems-index.json を生成
 npm run fetch:eval       # つようら王11mini/micro を取得
 ```
 
@@ -47,8 +63,10 @@ npm run fetch:eval       # つようら王11mini/micro を取得
 |---|---|
 | `engine/YaneuraOu` | やねうら王（submodule: [derbuihan/YaneuraOu](https://github.com/derbuihan/YaneuraOu) の `tsumeshogi-wasm` ブランチ。王手だけを列挙する USI 拡張コマンド `checks` を追加） |
 | `engine/build.sh` | WASM ビルド |
+| `cloudflare.config.ts` | Worker の設定（KV `HISTORY`、R2 `PROBLEMS`、静的アセット） |
+| `worker/index.ts` | Worker 本体（`/api/history` と `/problems/*`） |
 | `public/engine/` | ビルド済みエンジンと評価関数 |
-| `data/problems/` | 問題データ（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。本番は jsDelivr から配信 |
+| `data/problems/` | 問題データ（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。Git 管理外で、本番は R2 から配信 |
 | `public/problems-index.json` | 手数ごと・巻ごとの問題数 |
 | `scripts/` | データ取得・エンジン検証スクリプト |
 

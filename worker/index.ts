@@ -1,0 +1,51 @@
+/**
+ * Cloudflare Worker（静的アセット付き）。
+ *   /api/history     … 解答履歴（Workers KV）
+ *   /problems/*.txt  … 問題データ（R2）。同一オリジンで返すので CORS/COEP の考慮が不要
+ *   それ以外          … 静的アセット（Vite のビルド結果。_headers で COOP/COEP を付与）
+ */
+import { handleHistory, type KVLike } from '../src/history/api';
+
+/** R2 のうち使う部分 */
+interface R2ObjectBodyLike {
+  body: ReadableStream;
+  httpEtag: string;
+}
+interface R2BucketLike {
+  get(key: string): Promise<R2ObjectBodyLike | null>;
+}
+
+export interface Env {
+  HISTORY: KVLike;
+  PROBLEMS: R2BucketLike;
+  ASSETS: { fetch(request: Request): Promise<Response> };
+}
+
+const PROBLEM_PATH = /^\/problems\/(mate\d+\/\d{3}\.txt)$/;
+
+async function serveProblem(request: Request, env: Env, key: string): Promise<Response> {
+  const obj = await env.PROBLEMS.get(key);
+  if (!obj) return new Response('not found', { status: 404 });
+  if (request.headers.get('if-none-match') === obj.httpEtag) return new Response(null, { status: 304 });
+  return new Response(obj.body, {
+    headers: {
+      'content-type': 'text/plain; charset=utf-8',
+      etag: obj.httpEtag,
+      // 問題データは更新しない前提（更新するときはパスを変える）。ブラウザに1年キャッシュさせる
+      'cache-control': 'public, max-age=31536000, immutable',
+    },
+  });
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === '/api/history') return handleHistory(request, env.HISTORY);
+    if (url.pathname.startsWith('/problems/')) {
+      const m = url.pathname.match(PROBLEM_PATH);
+      if (!m || (request.method !== 'GET' && request.method !== 'HEAD')) return new Response('not found', { status: 404 });
+      return serveProblem(request, env, m[1]);
+    }
+    return env.ASSETS.fetch(request);
+  },
+};

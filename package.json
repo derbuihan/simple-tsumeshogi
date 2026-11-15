@@ -5,19 +5,21 @@
   "type": "module",
   "license": "GPL-3.0-or-later",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "dev": "cf dev",
+    "build": "tsc --noEmit && tsc --noEmit -p worker && cf build",
     "preview": "vite preview",
     "test": "vitest run",
     "fetch:problems": "bash scripts/fetch-problems.sh",
     "fetch:eval": "bash scripts/fetch-eval.sh",
     "build:engine": "bash engine/build.sh",
-    "smoke:engine": "node scripts/engine-smoke.mjs"
+    "smoke:engine": "node scripts/engine-smoke.mjs",
+    "upload:problems": "bash scripts/upload-problems.sh"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^2.0.0-beta.v.17",
+    "cf": "^1.0.0-beta.32",
     "typescript": "^5.9.3",
     "vite": "^8.3.8",
-    "vitest": "^5.1.0",
-    "wrangler": "^4.162.0"
+    "vitest": "^5.1.0"
   }
 }

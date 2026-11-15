@@ -7,12 +7,12 @@ export const PROBLEM_LENGTHS = [3, 5, 7, 9, 11] as const;
 export type ProblemLength = (typeof PROBLEM_LENGTHS)[number];
 
 /**
- * 問題データ（data/problems/）の配信元。
- * - 本番: .env.production の VITE_PROBLEMS_BASE（jsDelivr 経由で GitHub のタグ固定版を読む）
- * - 開発: Vite 開発サーバーがプロジェクト直下の data/problems/ をそのまま配信する
- * 索引（約60KB）だけは同一オリジンから読む。
+ * 問題データの配信元。
+ * - 本番: Worker が R2 から同一オリジンの /problems/mate{N}/NNN.txt で返す
+ * - 開発: .env.development の VITE_PROBLEMS_BASE（Vite がローカルの data/problems/ を配信）
+ * 索引（約60KB）は静的アセットとして読む。
  */
-const DATA_BASE: string = import.meta.env.VITE_PROBLEMS_BASE || `${import.meta.env.BASE_URL}data/problems/`;
+const DATA_BASE: string = import.meta.env.VITE_PROBLEMS_BASE || `${import.meta.env.BASE_URL}problems/`;
 const INDEX_URL = `${import.meta.env.BASE_URL}problems-index.json`;
 const volumeCache = new Map<string, Promise<string[]>>();
 let indexPromise: Promise<ProblemIndex> | null = null;
