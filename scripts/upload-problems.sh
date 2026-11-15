@@ -1,46 +1,77 @@
 #!/usr/bin/env bash
 # data/problems/ を R2 バケットにアップロードする（キー: mate{N}/NNN.txt）。
 # 使い方:
-#   scripts/upload-problems.sh                 # 全手数を本番の R2 へ
-#   scripts/upload-problems.sh --local mate3   # ローカル（cf dev 用）の R2 へ mate3 だけ
-#   scripts/upload-problems.sh --retry-failed  # 前回失敗したファイルだけ再アップロード
-# 環境変数: BUCKET（既定 simple-tsumeshogi-problems）, JOBS（並列数、既定 4。上げすぎると API に弾かれる）
+#   scripts/upload-problems.sh                  # 全ファイルを本番の R2 へ
+#   scripts/upload-problems.sh --missing        # R2 に無い（またはサイズが違う）ファイルだけ
+#   scripts/upload-problems.sh --local mate3    # ローカル（cf dev 用）の R2 へ mate3 だけ
+# 環境変数: BUCKET（既定 simple-tsumeshogi-problems）, JOBS（並列数、既定 2）
+#
+# 📝 cf r2 objects put は Cloudflare REST API を1ファイル1回呼ぶ。API には5分あたり1,200リクエストの
+#    上限があり、超えると 429 (code 971) で弾かれるので、並列数は小さく保つ（1ファイル約1秒 × 2並列 ≒ 毎秒2件）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUCKET="${BUCKET:-simple-tsumeshogi-problems}"
-JOBS="${JOBS:-4}"
-LOCAL=()
-RETRY=0
-if [ "${1:-}" = "--local" ]; then LOCAL=(--local); shift; fi
-if [ "${1:-}" = "--retry-failed" ]; then RETRY=1; shift; fi
+JOBS="${JOBS:-2}"
+LOCAL_FLAG=""
+MISSING=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --local) LOCAL_FLAG="--local"; shift ;;
+    --missing) MISSING=1; shift ;;
+    *) break ;;
+  esac
+done
 [ $# -gt 0 ] || set -- mate3 mate5 mate7 mate9 mate11
 
 cd "$ROOT/data/problems"
-FAILED="$ROOT/.cache/upload-failed.txt"
-mkdir -p "$ROOT/.cache"
 LIST="$(mktemp)"
 trap 'rm -f "$LIST"' EXIT
-if [ "$RETRY" = 1 ]; then
-  cp "$FAILED" "$LIST"
-else
-  for book in "$@"; do ls "$book"/*.txt; done > "$LIST"
-fi
-echo "uploading $(wc -l < "$LIST" | tr -d ' ') files to r2://$BUCKET ${LOCAL[*]:-(remote)}"
+for book in "$@"; do ls "$book"/*.txt; done > "$LIST"
 
-# 各ファイルは間隔を空けて最大3回試す。それでも失敗したものは $FAILED に書き出す
+if [ "$MISSING" = 1 ]; then
+  # R2 の一覧（キーとサイズ）と比べて、無いもの・サイズが違うものだけ残す
+  python3 -I - "$BUCKET" "$LIST" $LOCAL_FLAG <<'PY'
+import json, os, subprocess, sys
+bucket, list_path, *flags = sys.argv[1:]
+remote, cursor = {}, None
+while True:
+    cmd = ['cf', 'r2', 'objects', 'list', '--bucket-name', bucket, '--per-page', '1000', *flags]
+    if cursor: cmd += ['--cursor', cursor]
+    r = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    # 一覧は stdout、ページ情報（cursor）は stderr の "result_info: {...}" 行に出る
+    info = next((json.loads(l.split(':', 1)[1]) for l in r.stderr.splitlines() if l.startswith('result_info:')), {})
+    for o in json.loads(r.stdout or '[]'):
+        remote[o['key']] = o['size']
+    cursor = info.get('cursor')
+    if not info.get('is_truncated'):
+        break
+files = open(list_path).read().split()
+todo = [f for f in files if remote.get(f) != os.path.getsize(f)]
+open(list_path, 'w').write(''.join(f + '\n' for f in todo))
+print(f'R2 に {len(remote)} 件あり、{len(todo)} 件が未アップロード', file=sys.stderr)
+PY
+fi
+
+TOTAL="$(wc -l < "$LIST" | tr -d ' ')"
+echo "uploading $TOTAL files to r2://$BUCKET ${LOCAL_FLAG:-(remote)}"
+[ "$TOTAL" -gt 0 ] || { echo done; exit 0; }
+
+# 各ファイルは間隔を空けて最大3回試す（レート制限が解けるまで待つ）。それでも失敗したものは $FAILED に書き出す
+FAILED="$ROOT/.cache/upload-failed.txt"
+mkdir -p "$ROOT/.cache"
 : > "$FAILED"
-export BUCKET FAILED
-export LOCAL_FLAG="${LOCAL[*]:-}"
-xargs -P "$JOBS" -I{} sh -c '
-  for wait in 2 5 0; do
-    cf r2 objects put "{}" --bucket-name "$BUCKET" --file "{}" --content-type "text/plain; charset=utf-8" --quiet $LOCAL_FLAG >/dev/null 2>&1 && exit 0
+export BUCKET FAILED LOCAL_FLAG
+# -I {} は置換後の長さに上限があるので使わず、ファイル名は $1 で渡す
+xargs -n 1 -P "$JOBS" sh -c '
+  for wait in 30 90 0; do
+    cf r2 objects put "$1" --bucket-name "$BUCKET" --file "$1" --content-type "text/plain; charset=utf-8" --quiet $LOCAL_FLAG >/dev/null 2>&1 && exit 0
     [ "$wait" = 0 ] || sleep "$wait"
   done
-  echo "{}" >> "$FAILED"
-' < "$LIST"
+  echo "$1" >> "$FAILED"
+' _ < "$LIST"
 
 if [ -s "$FAILED" ]; then
-  echo "failed: $(wc -l < "$FAILED" | tr -d ' ') files (see $FAILED)" >&2
+  echo "failed: $(wc -l < "$FAILED" | tr -d ' ') files (see $FAILED; rerun with --missing)" >&2
   exit 1
 fi
 echo done
