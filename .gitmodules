@@ -1,3 +1,4 @@
 [submodule "engine/YaneuraOu"]
 	path = engine/YaneuraOu
-	url = https://github.com/yaneurao/YaneuraOu.git
+	url = https://github.com/derbuihan/YaneuraOu.git
+	branch = tsumeshogi-wasm

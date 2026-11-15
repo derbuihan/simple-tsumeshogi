@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 公式やねうら王に USI拡張パッチ(checks)を当て、Emscripten で WASM ビルドする。
+# やねうら王 (Fork: derbuihan/YaneuraOu の tsumeshogi-wasm ブランチ。USI拡張 checks 付き) を
+# Emscripten で WASM ビルドする。
 # 使い方: engine/build.sh [mini|micro]   (既定: mini)
 # 出力: public/engine/yaneuraou.<variant>.{js,wasm}
 set -euo pipefail
@@ -28,11 +29,9 @@ case "$(em++ --version | head -1)" in
 esac
 
 cd "$SRC"
-# パッチ適用（適用済みならスキップ）
-if git apply --check "$ROOT/engine/patches/usi-ext.patch" 2>/dev/null; then
-  git apply "$ROOT/engine/patches/usi-ext.patch"
-elif ! git apply --reverse --check "$ROOT/engine/patches/usi-ext.patch" 2>/dev/null; then
-  echo "patch does not apply cleanly" >&2; exit 1
+# checks コマンド等の追加は Fork (derbuihan/YaneuraOu, branch tsumeshogi-wasm) にコミット済み。
+if ! grep -q 'token == "checks"' source/usi.cpp; then
+  echo "engine/YaneuraOu が tsumeshogi-wasm ブランチではありません: git submodule update --init" >&2; exit 1
 fi
 
 BUILD="$ROOT/engine/build/$VARIANT"
