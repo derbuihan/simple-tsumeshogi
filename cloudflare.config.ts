@@ -10,8 +10,8 @@ export default defineConfig({
       runWorkerFirst: ['/api/*', '/problems/*'],
     },
     env: {
-      // 解答履歴。id は `cf kv namespaces create` で作成した値（デプロイ時に設定）
-      HISTORY: bindings.kv(),
+      // 解答履歴（KV namespace: simple-tsumeshogi-history）
+      HISTORY: bindings.kv({ id: 'be6208de555c42ecb6c92c69beb81c61' }),
       // 問題データ（data/problems/ を scripts/upload-problems.sh でアップロード）
       PROBLEMS: bindings.r2({ name: 'simple-tsumeshogi-problems' }),
       ASSETS: bindings.assets(),
