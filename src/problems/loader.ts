@@ -1,17 +1,24 @@
 import { parseProblemLine, type Problem } from '../game/problem';
 
-/** public/problems/index.json: 手数ごとの巻ごと問題数 */
+/** public/problems-index.json: 手数ごとの巻ごと問題数 */
 export type ProblemIndex = Record<string, { moves: number; volumes: number[] }>;
 
 export const PROBLEM_LENGTHS = [3, 5, 7, 9, 11] as const;
 export type ProblemLength = (typeof PROBLEM_LENGTHS)[number];
 
-const BASE = `${import.meta.env.BASE_URL}problems/`;
+/**
+ * 問題データ（data/problems/）の配信元。
+ * - 本番: .env.production の VITE_PROBLEMS_BASE（jsDelivr 経由で GitHub のタグ固定版を読む）
+ * - 開発: Vite 開発サーバーがプロジェクト直下の data/problems/ をそのまま配信する
+ * 索引（約60KB）だけは同一オリジンから読む。
+ */
+const DATA_BASE: string = import.meta.env.VITE_PROBLEMS_BASE || `${import.meta.env.BASE_URL}data/problems/`;
+const INDEX_URL = `${import.meta.env.BASE_URL}problems-index.json`;
 const volumeCache = new Map<string, Promise<string[]>>();
 let indexPromise: Promise<ProblemIndex> | null = null;
 
 export function loadIndex(): Promise<ProblemIndex> {
-  indexPromise ??= fetch(`${BASE}index.json`).then((r) => {
+  indexPromise ??= fetch(INDEX_URL).then((r) => {
     if (!r.ok) throw new Error(`failed to load problem index: ${r.status}`);
     return r.json();
   });
@@ -26,7 +33,7 @@ export function loadVolume(length: number, volume: number): Promise<string[]> {
   const key = `mate${length}/${pad3(volume)}`;
   let p = volumeCache.get(key);
   if (!p) {
-    p = fetch(`${BASE}${key}.txt`)
+    p = fetch(`${DATA_BASE}${key}.txt`)
       .then((r) => {
         if (!r.ok) throw new Error(`failed to load ${key}: ${r.status}`);
         return r.text();

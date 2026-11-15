@@ -20,7 +20,8 @@ npm install
 npm run dev
 ```
 
-ビルド済みのエンジン（`public/engine/`）と問題データ（`public/problems/`）はリポジトリに含まれています。
+ビルド済みのエンジン（`public/engine/`）と問題データ（`data/problems/`）はリポジトリに含まれています。
+本番では問題データを Cloudflare にアップロードせず、[jsDelivr](https://www.jsdelivr.com/) 経由で GitHub のタグ固定版（`problems-vN`、`.env.production` で指定）から読み込みます。開発サーバーではローカルの `data/problems/` を読みます。
 
 ### エンジンを再ビルドする場合
 
@@ -36,7 +37,7 @@ npm run smoke:engine -- mini 3 2000
 ### データを取り直す場合
 
 ```bash
-npm run fetch:problems   # shogimate から問題データを取得し index.json を生成
+npm run fetch:problems   # shogimate から問題データを取得し public/problems-index.json を生成
 npm run fetch:eval       # つようら王11mini/micro を取得
 ```
 
@@ -47,7 +48,8 @@ npm run fetch:eval       # つようら王11mini/micro を取得
 | `engine/YaneuraOu` | やねうら王（submodule: [derbuihan/YaneuraOu](https://github.com/derbuihan/YaneuraOu) の `tsumeshogi-wasm` ブランチ。王手だけを列挙する USI 拡張コマンド `checks` を追加） |
 | `engine/build.sh` | WASM ビルド |
 | `public/engine/` | ビルド済みエンジンと評価関数 |
-| `public/problems/` | 問題データ（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`） |
+| `data/problems/` | 問題データ（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。本番は jsDelivr から配信 |
+| `public/problems-index.json` | 手数ごと・巻ごとの問題数 |
 | `scripts/` | データ取得・エンジン検証スクリプト |
 
 ## クレジットとライセンス
