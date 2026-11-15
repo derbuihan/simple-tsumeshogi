@@ -46,14 +46,3 @@ export async function loadProblem(id: string): Promise<Problem> {
   if (!line) throw new Error(`problem not found: ${id}`);
   return parseProblemLine(id, line);
 }
-
-/** 指定した手数の中からランダムに1問選ぶ（Phase 3 で出題順序の設定に置き換える） */
-export async function randomProblem(lengths: readonly number[]): Promise<Problem> {
-  const index = await loadIndex();
-  const length = lengths[Math.floor(Math.random() * lengths.length)];
-  const book = index[`mate${length}`];
-  if (!book) throw new Error(`no problems for mate${length}`);
-  const volume = Math.floor(Math.random() * book.volumes.length);
-  const line = Math.floor(Math.random() * book.volumes[volume]);
-  return loadProblem(problemId(length, volume, line));
-}

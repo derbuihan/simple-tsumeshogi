@@ -1,7 +1,11 @@
-import { EngineClient, type EvalVariant } from './engine/EngineClient';
+import { EngineClient } from './engine/EngineClient';
 import type { Problem } from './game/problem';
 import { Session, type FailureReason } from './game/session';
-import { randomProblem } from './problems/loader';
+import { problemStatus, type Outcome } from './history/record';
+import type { HistoryStore } from './history/store';
+import { loadIndex, loadProblem, PROBLEM_LENGTHS } from './problems/loader';
+import { selectProblem } from './problems/selector';
+import { loadCursor, ORDER_LABELS, saveCursor, saveSettings, type QuestionOrder, type Settings } from './settings';
 import { applyMoves, parseUsiMove } from './shogi/move';
 import { moveToJapanese, pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
@@ -29,11 +33,8 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
 /** 玉方の応手を見せるための最小待ち時間 */
 const MIN_REPLY_DELAY_MS = 350;
 
-interface AppOptions {
-  lengths: number[];
-  showLength: boolean;
-  variant: EvalVariant;
-}
+const STATUS_LABEL = { untried: '初挑戦', unsolved: '未正解', solved: '正解済み' } as const;
+const SYNC_LABEL = { synced: '履歴は同期済み', pending: '履歴を同期中', offline: '履歴はこの端末に保存中（未同期）' } as const;
 
 export class App {
   private engine: EngineClient | null = null;
@@ -41,8 +42,13 @@ export class App {
   private session: Session | null = null;
   /** 最後に終わった挑戦の手順（解答再生の「自分の手順」） */
   private lastAttempt: string[] = [];
-  /** この問題で解答を見たか（Phase 3 で履歴に記録する） */
+  /** この問題で解答を見たか（以後のクリアは「解答閲覧後のクリア」として記録する） */
   private viewedAnswer = false;
+  /** 出題時点での履歴上の状態 */
+  private problemTag: keyof typeof STATUS_LABEL = 'untried';
+  /** 出題方法についてのお知らせ（希望の順序で選べなかったときなど） */
+  private problemNotice: string | undefined;
+  private settingsOpen = false;
   private phase: Phase = { kind: 'loading', message: '準備中…' };
   private selection: Selection = null;
   private pendingPromotion: { promote: string; plain: string } | null = null;
@@ -55,12 +61,15 @@ export class App {
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly options: AppOptions,
+    private settings: Settings,
+    private readonly history: HistoryStore,
   ) {
     this.root.innerHTML = `
       <header class="app-header">
         <h1 class="title">実戦詰将棋</h1>
         <div class="problem-info" aria-live="polite"></div>
+        <span class="sync" role="status"></span>
+        <button type="button" class="icon-btn" data-action="settings" aria-label="出題設定">⚙</button>
       </header>
       <main class="app-main"></main>
       <section class="panel" aria-live="polite"></section>
@@ -75,12 +84,17 @@ export class App {
     this.root.querySelector('.app-main')!.appendChild(this.board.el);
     this.panel.addEventListener('click', (e) => this.onAction(e));
     this.overlay.addEventListener('click', (e) => this.onAction(e));
+    this.root.querySelector('.app-header')!.addEventListener('click', (e) => this.onAction(e));
+    this.history.onChange = () => this.renderHeader();
   }
 
   async start(): Promise<void> {
     this.render();
-    const enginePromise = EngineClient.create(this.options.variant);
+    const enginePromise = EngineClient.create(this.settings.variant);
+    enginePromise.catch(() => undefined);
     try {
+      // 履歴が取れなくても出題は続ける（オフライン時は端末内の履歴を使う）
+      await Promise.race([this.history.sync(), new Promise((r) => setTimeout(r, 3000))]);
       await this.loadProblem();
       this.phase = { kind: 'loading', message: '将棋エンジンを読み込み中…' };
       this.render();
@@ -94,7 +108,19 @@ export class App {
   // ---- 進行 ----
 
   private async loadProblem(): Promise<void> {
-    this.problem = await randomProblem(this.options.lengths);
+    const index = await loadIndex();
+    const result = selectProblem({
+      index,
+      lengths: this.settings.lengths,
+      order: this.settings.order,
+      records: this.history.records,
+      cursor: loadCursor(),
+      excludeId: this.problem?.id,
+    });
+    saveCursor(result.cursor);
+    this.problem = await loadProblem(result.id);
+    this.problemTag = problemStatus(this.history.records[result.id]);
+    this.problemNotice = result.fallback;
     this.viewedAnswer = false;
     this.lastAttempt = [];
     this.session = null;
@@ -147,13 +173,19 @@ export class App {
       case 'attacker-turn':
         this.phase = { kind: 'playing', thinking: false };
         break;
-      case 'success':
+      case 'success': {
         this.lastAttempt = session.moves.slice();
         this.phase = { kind: 'success', moves: state.moves };
+        const outcome: Outcome = this.viewedAnswer
+          ? 'clear-after-viewing'
+          : state.moves <= session.problem.length ? 'shortest' : 'clear';
+        this.history.record(session.problem.id, outcome, state.moves);
         break;
+      }
       case 'failure':
         this.lastAttempt = session.moves.slice();
         this.phase = { kind: 'failure', reason: state.reason };
+        this.history.record(session.problem.id, 'fail');
         break;
       case 'thinking':
         break;
@@ -252,7 +284,10 @@ export class App {
         break;
       case 'giveup-ok':
         this.confirmGiveup = false;
-        if (this.session) this.lastAttempt = this.session.moves.slice();
+        if (this.session) {
+          this.lastAttempt = this.session.moves.slice();
+          this.history.record(this.session.problem.id, 'giveup');
+        }
         this.viewedAnswer = true;
         this.phase = { kind: 'answer', line: 'model', step: 0, back: { kind: 'failure', reason: 'giveup' } };
         break;
@@ -297,6 +332,15 @@ export class App {
       case 'promote-cancel':
         this.pendingPromotion = null;
         break;
+      case 'settings':
+        this.settingsOpen = true;
+        break;
+      case 'settings-cancel':
+        this.settingsOpen = false;
+        break;
+      case 'settings-save':
+        this.saveSettingsForm();
+        return;
     }
     this.render();
   }
@@ -321,11 +365,16 @@ export class App {
       return;
     }
     const [, vol, line] = p.id.split('/');
-    const revealed = this.options.showLength || !['loading', 'playing'].includes(this.phase.kind);
+    const revealed = this.settings.showLength || !['loading', 'playing'].includes(this.phase.kind);
     const side = p.attacker === 'b' ? '先手' : '後手';
     this.header.innerHTML = `<span class="pid">問題 ${vol}-${line}</span>
       <span class="badge">${revealed ? `${p.length}手詰` : '？手詰'}</span>
-      <span class="side">攻方：${side}</span>`;
+      <span class="side">攻方：${side}</span>
+      <span class="tag status-${this.problemTag}">${STATUS_LABEL[this.problemTag]}</span>`;
+    const sync = this.root.querySelector<HTMLElement>('.sync')!;
+    sync.dataset.state = this.history.syncState;
+    sync.title = SYNC_LABEL[this.history.syncState];
+    sync.setAttribute('aria-label', SYNC_LABEL[this.history.syncState]);
   }
 
   private renderBoard(): void {
@@ -345,7 +394,7 @@ export class App {
     } else {
       position = parseSfen(p.sfen);
     }
-    const interactive = this.checks.length > 0 && !this.pendingPromotion && !this.confirmGiveup;
+    const interactive = this.checks.length > 0 && !this.pendingPromotion && !this.confirmGiveup && !this.settingsOpen;
     this.board.render({
       position,
       bottom: p.attacker,
@@ -374,9 +423,9 @@ export class App {
         const moved = (this.session?.moves.length ?? 0) > 0;
         const status = phase.thinking
           ? '<span class="spinner"></span>玉方が考えています…'
-          : `あなたの手番です。王手をかけてください${this.options.showLength && p ? `（${p.length}手詰）` : ''}`;
+          : `あなたの手番です。王手をかけてください${this.settings.showLength && p ? `（${p.length}手詰）` : ''}`;
         html = `<p class="status">${status}</p>
-          <p class="notice">${phase.notice ?? ''}</p>
+          <p class="notice">${phase.notice ?? (this.session?.moves.length ? '' : (this.problemNotice ?? ''))}</p>
           <div class="actions">
             ${btn('retry', 'やり直す', 'secondary', phase.thinking || !moved)}
             ${btn('giveup', '解答を見る', 'ghost', phase.thinking)}
@@ -464,10 +513,68 @@ export class App {
           </div>
         </div>`;
       this.overlay.hidden = false;
+    } else if (this.settingsOpen) {
+      this.overlay.innerHTML = this.settingsDialogHtml();
+      this.overlay.hidden = false;
     } else {
       this.overlay.hidden = true;
       this.overlay.innerHTML = '';
     }
+  }
+
+  private settingsDialogHtml(): string {
+    const s = this.settings;
+    const records = Object.values(this.history.records);
+    const solved = records.filter((r) => r.clears > 0).length;
+    const lengths = PROBLEM_LENGTHS.map(
+      (n) => `<label class="chip"><input type="checkbox" name="length" value="${n}"${s.lengths.includes(n) ? ' checked' : ''}>${n}手詰</label>`,
+    ).join('');
+    const orders = (Object.keys(ORDER_LABELS) as QuestionOrder[])
+      .map(
+        (o) => `<label class="radio"><input type="radio" name="order" value="${o}"${s.order === o ? ' checked' : ''}>${ORDER_LABELS[o]}${o === 'untried' ? '（おすすめ）' : ''}</label>`,
+      )
+      .join('');
+    return `<form class="dialog settings" role="dialog" aria-label="出題設定" onsubmit="return false">
+        <h2>出題設定</h2>
+        <fieldset><legend>出題する手数</legend><div class="chips">${lengths}</div></fieldset>
+        <fieldset><legend>出題順序</legend>${orders}</fieldset>
+        <label class="radio"><input type="checkbox" name="showLength"${s.showLength ? ' checked' : ''}>解答中に詰み手数を表示する</label>
+        <fieldset><legend>評価関数</legend>
+          <label class="radio"><input type="radio" name="variant" value="mini"${s.variant === 'mini' ? ' checked' : ''}>つようら王11mini（標準）</label>
+          <label class="radio"><input type="radio" name="variant" value="micro"${s.variant === 'micro' ? ' checked' : ''}>つようら王11micro（軽量）</label>
+        </fieldset>
+        <p class="sub">挑戦済み ${records.length}問 ・ 自力で正解 ${solved}問</p>
+        <p class="notice settings-error"></p>
+        <div class="actions">
+          <button type="button" class="btn secondary" data-action="settings-cancel">キャンセル</button>
+          <button type="button" class="btn primary" data-action="settings-save">保存</button>
+        </div>
+      </form>`;
+  }
+
+  private saveSettingsForm(): void {
+    const form = this.overlay.querySelector('form')!;
+    const lengths = [...form.querySelectorAll<HTMLInputElement>('input[name="length"]:checked')].map((i) => Number(i.value));
+    if (lengths.length === 0) {
+      form.querySelector('.settings-error')!.textContent = '手数を1つ以上選んでください';
+      return;
+    }
+    const next: Settings = {
+      lengths,
+      order: (form.querySelector<HTMLInputElement>('input[name="order"]:checked')?.value ?? 'untried') as QuestionOrder,
+      showLength: form.querySelector<HTMLInputElement>('input[name="showLength"]')!.checked,
+      variant: form.querySelector<HTMLInputElement>('input[name="variant"]:checked')?.value === 'micro' ? 'micro' : 'mini',
+    };
+    const variantChanged = next.variant !== this.settings.variant;
+    this.settings = next;
+    saveSettings(next);
+    this.settingsOpen = false;
+    // 評価関数の切り替えはエンジンを読み込み直す必要があるので再読み込みする
+    if (variantChanged) {
+      location.reload();
+      return;
+    }
+    this.render();
   }
 }
 

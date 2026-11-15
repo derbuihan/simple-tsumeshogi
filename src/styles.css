@@ -48,10 +48,17 @@ button {
 /* ---- ヘッダー ---- */
 .app-header {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 0 4px;
+}
+.app-header .problem-info {
+  order: 3;
+  flex-basis: 100%;
+}
+.app-header .sync {
+  margin-left: auto;
 }
 .title {
   font-size: 1.1rem;
@@ -415,4 +422,99 @@ button {
 }
 .promote-choices .btn {
   flex: 1;
+}
+
+/* ヘッダーの状態表示 */
+.icon-btn {
+  border: none;
+  background: transparent;
+  font-size: 1.4rem;
+  line-height: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+.sync {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #c9b9a2;
+}
+.sync[data-state='synced'] {
+  background: var(--ok);
+}
+.sync[data-state='offline'] {
+  background: #d08a2c;
+}
+.problem-info .tag {
+  margin-left: 0;
+}
+.status-untried {
+  color: var(--muted);
+}
+.status-unsolved {
+  color: var(--ng);
+}
+.status-solved {
+  color: var(--ok);
+}
+
+/* 設定 */
+.dialog.settings {
+  text-align: left;
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.dialog h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.dialog fieldset {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dialog legend {
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 4px;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d6c8b4;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.chip:has(input:checked) {
+  border-color: var(--accent);
+  background: #fbe9e3;
+}
+.radio {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
+.radio input,
+.chip input {
+  accent-color: var(--accent);
+  width: 18px;
+  height: 18px;
 }
