@@ -2,7 +2,7 @@ import { bindings, defineConfig } from 'cf/config';
 
 export default defineConfig({
   worker: {
-    name: 'simple-tsumeshogi',
+    name: 'tsumeshogi',
     compatibilityDate: '2026-11-01',
     entrypoint: './worker/index.ts',
     assets: {

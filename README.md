@@ -32,7 +32,7 @@ npm run fetch:problems   # shogimate から取得（public/problems-index.json �
 
 ### デプロイ
 
-アプリは Workers Builds（GitHub 連携）で、`main` への push ごとに Cloudflare 側でビルド・デプロイされます（ビルド: `npm run build`、デプロイ: `npx cf deploy --prebuilt`）。
+アプリは Workers Builds（GitHub 連携、Worker 名 `tsumeshogi`）で、`main` への push ごとに Cloudflare 側でビルド・デプロイされます（ビルド: `npm run build`、デプロイ: `npx cf deploy --prebuilt`、Node は `.nvmrc` で指定）。
 
 問題データの R2 へのアップロードは、データを変えたときだけ手元から行います。
 
