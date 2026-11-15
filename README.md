@@ -21,14 +21,14 @@ npm run dev
 ```
 
 ビルド済みのエンジン（`public/engine/`）はリポジトリに含まれています。
-問題データ（約600MB）はリポジトリに含めず、R2 に置きます。開発時は次のコマンドで手元の `data/problems/` に取得してください。
+問題データ（約600MB）はリポジトリに含めず、R2 に置きます。
+`npm run dev` は [`cf dev`](https://developers.cloudflare.com/cf/)（Vite + Cloudflare Vite プラグイン）で、Worker・KV・R2 をローカルで再現して起動します。
+開発時も本番と同じく Worker が R2（ローカル）から `/problems/` で返すので、初回だけ問題データを取得してローカルの R2 に入れてください。
 
 ```bash
-npm run fetch:problems   # shogimate から取得（public/problems-index.json も再生成）
+npm run fetch:problems           # shogimate から .cache/shogimate に取得（public/problems-index.json も再生成）
+npm run upload:problems -- --local   # ローカルの R2（.cloudflare/state）に投入（10分前後）
 ```
-
-`npm run dev` は [`cf dev`](https://developers.cloudflare.com/cf/)（Vite + Cloudflare Vite プラグイン）で、Worker・KV・R2 をローカルで再現して起動します。
-開発時の問題データはローカルの `data/problems/` を直接読みます（`.env.development`）。本番では Worker が R2 から `/problems/` で返します。
 
 ### デプロイ
 
@@ -37,7 +37,7 @@ npm run fetch:problems   # shogimate から取得（public/problems-index.json �
 問題データの R2 へのアップロードは、データを変えたときだけ手元から行います。
 
 ```bash
-npm run upload:problems   # data/problems/ を R2 にアップロード
+npm run upload:problems -- --missing   # R2 に無いファイルだけアップロード（API のレート制限のため並列数2）
 ```
 
 ### エンジンを再ビルドする場合
@@ -66,7 +66,7 @@ npm run fetch:eval       # つようら王11mini/micro を取得
 | `cloudflare.config.ts` | Worker の設定（KV `HISTORY`、R2 `PROBLEMS`、静的アセット） |
 | `worker/index.ts` | Worker 本体（`/api/history` と `/problems/*`） |
 | `public/engine/` | ビルド済みエンジンと評価関数 |
-| `data/problems/` | 問題データ（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。Git 管理外で、本番は R2 から配信 |
+| `.cache/shogimate/public/data/` | 問題データの取得先（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。Git 管理外。R2 にアップロードして配信 |
 | `public/problems-index.json` | 手数ごと・巻ごとの問題数 |
 | `scripts/` | データ取得・エンジン検証スクリプト |
 

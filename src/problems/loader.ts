@@ -7,10 +7,9 @@ export const PROBLEM_LENGTHS = [3, 5, 7, 9, 11] as const;
 export type ProblemLength = (typeof PROBLEM_LENGTHS)[number];
 
 /**
- * 問題データの配信元。
- * - 本番: Worker が R2 から同一オリジンの /problems/mate{N}/NNN.txt で返す
- * - 開発: .env.development の VITE_PROBLEMS_BASE（Vite がローカルの data/problems/ を配信）
- * 索引（約60KB）は静的アセットとして読む。
+ * 問題データの配信元。Worker が R2 から同一オリジンの /problems/mate{N}/NNN.txt で返す。
+ * 開発時（cf dev）はローカルの R2 から返す（scripts/upload-problems.sh --local で投入）。
+ * VITE_PROBLEMS_BASE で別の配信元に差し替えられる。索引（約60KB）は静的アセットとして読む。
  */
 const DATA_BASE: string = import.meta.env.VITE_PROBLEMS_BASE || `${import.meta.env.BASE_URL}problems/`;
 const INDEX_URL = `${import.meta.env.BASE_URL}problems-index.json`;

@@ -5,5 +5,3 @@ engine/build/
 .DS_Store
 .cache/
 .cloudflare/
-# 問題データは R2 に置く（scripts/fetch-problems.sh で取得、scripts/upload-problems.sh で R2 へ）
-data/

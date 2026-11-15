@@ -1,4 +1,4 @@
-// data/problems/<book>/NNN.txt から index（手数ごとの巻ごと問題数）を生成する
+// <problems dir>/<book>/NNN.txt から index（手数ごとの巻ごと問題数）を生成する
 // 使い方: node scripts/build-problem-index.mjs <problems dir> <output json>
 import fs from 'node:fs';
 import path from 'node:path';
