@@ -5,9 +5,9 @@
 # 使い方:
 #   scripts/upload-problems.sh                  # 全ファイルを本番の R2 へ
 #   scripts/upload-problems.sh --missing        # R2 に無い（またはサイズが違う）ファイルだけ
-#   scripts/upload-problems.sh --local          # ローカル（cf dev 用）の R2 へ全部（API を使わないので速い）
+#   scripts/upload-problems.sh --local          # ローカル（cf dev 用）の R2 へ全部。起動中の cf dev 経由で入れる（scripts/upload-problems-local.mjs）
 #   scripts/upload-problems.sh --local mate3    # ローカルの R2 へ mate3 だけ
-# 環境変数: BUCKET（既定 simple-tsumeshogi-problems）, JOBS（並列数、既定 2・--local は 8）,
+# 環境変数: BUCKET（既定 simple-tsumeshogi-problems）, JOBS（並列数、既定 2）,
 #           PROBLEMS_DIR（既定 .cache/minimal-hand/public/data）
 #
 # 📝 cf r2 objects put は Cloudflare REST API を1ファイル1回呼ぶ。API には5分あたり1,200リクエストの
@@ -26,8 +26,12 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ $# -gt 0 ] || set -- mate3 mate5 mate7 mate9 mate11
-# ローカルは API のレート制限が無いので並列数を上げる
-if [ -n "$LOCAL_FLAG" ]; then JOBS="${JOBS:-8}"; else JOBS="${JOBS:-2}"; fi
+# 📝 cf r2 objects put --local は1件ごとの起動が重く、並列にすると固まることもあるので、ローカルは cf dev 経由で入れる
+if [ -n "$LOCAL_FLAG" ]; then
+  [ "$MISSING" = 0 ] || { echo "--local では --missing は使えません（全件を入れ直してください）" >&2; exit 1; }
+  PROBLEMS_DIR="$PROBLEMS_DIR" exec node "$ROOT/scripts/upload-problems-local.mjs" "$@"
+fi
+JOBS="${JOBS:-2}"
 
 [ -d "$PROBLEMS_DIR/mate3" ] || { echo "問題データがありません。先に npm run fetch:problems と npm run filter:minimal-hand を実行してください: $PROBLEMS_DIR" >&2; exit 1; }
 cd "$PROBLEMS_DIR"
@@ -37,21 +41,18 @@ for book in "$@"; do ls "$book"/*.txt; done > "$LIST"
 
 if [ "$MISSING" = 1 ]; then
   # R2 の一覧（キーとサイズ）と比べて、無いもの・サイズが違うものだけ残す
-  python3 -I - "$BUCKET" "$LIST" $LOCAL_FLAG <<'PY'
+  python3 -I - "$BUCKET" "$LIST" <<'PY'
 import json, os, subprocess, sys
-bucket, list_path, *flags = sys.argv[1:]
+bucket, list_path = sys.argv[1:]
 remote, cursor = {}, None
 while True:
-    cmd = ['cf', 'r2', 'objects', 'list', '--bucket-name', bucket, '--per-page', '1000', *flags]
+    cmd = ['cf', 'r2', 'objects', 'list', '--bucket-name', bucket, '--per-page', '1000']
     if cursor: cmd += ['--cursor', cursor]
     r = subprocess.run(cmd, capture_output=True, text=True, check=True)
     # 一覧は stdout、ページ情報（cursor）は stderr の "result_info: {...}" 行に出る
     info = next((json.loads(l.split(':', 1)[1]) for l in r.stderr.splitlines() if l.startswith('result_info:')), {})
     for o in json.loads(r.stdout or '[]'):
         remote[o['key']] = o['size']
-    if info.get('is_truncated') and info.get('cursor') == cursor:
-        # 📝 ローカル（--local）の一覧はカーソルが進まず同じページを返し続けることがある
-        sys.exit('R2 の一覧取得でカーソルが進みません。ローカルの場合は cf dev を起動して /problems/... に直接アクセスして確認してください')
     cursor = info.get('cursor')
     if not info.get('is_truncated'):
         break
@@ -63,18 +64,18 @@ PY
 fi
 
 TOTAL="$(wc -l < "$LIST" | tr -d ' ')"
-echo "uploading $TOTAL files to r2://$BUCKET ${LOCAL_FLAG:-(remote)}"
+echo "uploading $TOTAL files to r2://$BUCKET"
 [ "$TOTAL" -gt 0 ] || { echo done; exit 0; }
 
 # 各ファイルは間隔を空けて最大3回試す（レート制限が解けるまで待つ）。それでも失敗したものは $FAILED に書き出す
 FAILED="$ROOT/.cache/upload-failed.txt"
 mkdir -p "$ROOT/.cache"
 : > "$FAILED"
-export BUCKET FAILED LOCAL_FLAG
+export BUCKET FAILED
 # -I {} は置換後の長さに上限があるので使わず、ファイル名は $1 で渡す
 xargs -n 1 -P "$JOBS" sh -c '
   for wait in 30 90 0; do
-    cf r2 objects put "$1" --bucket-name "$BUCKET" --file "$1" --content-type "text/plain; charset=utf-8" --quiet $LOCAL_FLAG >/dev/null 2>&1 && exit 0
+    cf r2 objects put "$1" --bucket-name "$BUCKET" --file "$1" --content-type "text/plain; charset=utf-8" --quiet >/dev/null 2>&1 && exit 0
     [ "$wait" = 0 ] || sleep "$wait"
   done
   echo "$1" >> "$FAILED"

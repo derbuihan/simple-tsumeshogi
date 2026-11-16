@@ -105,7 +105,7 @@ const failures = [];
 const isMateForDefender = (s) => s && s.kind === 'mate' && s.value.startsWith('-');
 
 for (const book of ['mate3', 'mate5', 'mate7', 'mate9', 'mate11']) {
-  const text = fs.readFileSync(path.join(ROOT, '.cache/shogimate/public/data', book, '000.txt'), 'utf8');
+  const text = fs.readFileSync(path.join(ROOT, '.cache/minimal-hand/public/data', book, '000.txt'), 'utf8');
   const records = text.split('\n').filter((l) => l.trim()).slice(0, perBook);
   for (const [i, rec] of records.entries()) {
     const [sfen, movesStr] = rec.split(' moves ');

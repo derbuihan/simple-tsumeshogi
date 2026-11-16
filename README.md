@@ -21,15 +21,22 @@ npm run dev
 ```
 
 ビルド済みのエンジン（`public/engine/`）はリポジトリに含まれています。
-問題データ（約600MB）はリポジトリに含めず、R2 に置きます。
+問題データ（約500MB）はリポジトリに含めず、R2 に置きます。
+元データ（shogimate）の攻方の持ち駒を最低限にした `.cache/minimal-hand/public/data` が正本で、索引（`public/problems-index.json`）も R2 もここから作ります。
 `npm run dev` は [`cf dev`](https://developers.cloudflare.com/cf/)（Vite + Cloudflare Vite プラグイン）で、Worker・KV・R2 をローカルで再現して起動します。
-開発時も本番と同じく Worker が R2（ローカル）から `/problems/` で返すので、初回だけ問題データを取得してローカルの R2 に入れてください。
+開発時も本番と同じく Worker が R2（ローカル）から `/problems/` で返すので、初回だけ問題データをローカルの R2 に入れてください。
+
+```bash
+npm run dev                          # 先に起動しておく（投入は起動中の Worker 経由）
+npm run upload:problems -- --local   # 別の端末で。ローカルの R2（.cloudflare/state）に投入（6分前後）
+```
+
+正本を作り直すときは、元データを取得して変換します（全件で数時間以上かかる。詳しくは [docs/minimal-hand.md](docs/minimal-hand.md)）。
 
 ```bash
 npm run fetch:problems           # shogimate から .cache/shogimate に取得
-npm run prepare:mate-engine      # 持ち駒を最低限にする変換に使う詰み証明エンジンを用意
-npm run filter:minimal-hand -- --engine "$PWD/.cache/research/YaneuraOu/source/YaneuraOu-by-gcc"  # .cache/minimal-hand に変換（時間がかかる）
-npm run upload:problems -- --local   # ローカルの R2（.cloudflare/state）に投入（10分前後）
+npm run prepare:mate-engine      # 変換に使う詰み証明エンジンを用意
+npm run filter:minimal-hand -- --engine "$PWD/.cache/research/YaneuraOu/source/YaneuraOu-by-gcc"  # .cache/minimal-hand に変換
 ```
 
 ### デプロイ
@@ -72,8 +79,8 @@ npm run fetch:eval       # つようら王11mini/micro を取得
 | `cloudflare.config.ts` | Worker の設定（KV `HISTORY`、R2 `PROBLEMS`、静的アセット） |
 | `worker/index.ts` | Worker 本体（`/api/history` と `/problems/*`） |
 | `public/engine/` | ビルド済みエンジンと評価関数 |
-| `.cache/shogimate/public/data/` | 元の問題データの取得先（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。Git 管理外 |
-| `.cache/minimal-hand/public/data/` | 攻方の持ち駒を最低限にした問題データ（形式は同じ）。Git 管理外。R2 にアップロードして配信 |
+| `.cache/minimal-hand/public/data/` | 問題データの正本（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。攻方の持ち駒を最低限にしたもの。Git 管理外。R2 にアップロードして配信 |
+| `.cache/shogimate/public/data/` | 正本を作り直すときだけ取得する元データ（形式は同じ）。Git 管理外 |
 | `public/problems-index.json` | 手数ごと・巻ごとの問題数 |
 | `scripts/` | データ取得・エンジン検証スクリプト |
 
