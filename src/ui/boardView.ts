@@ -19,6 +19,8 @@ export interface BoardViewModel {
   interactive: boolean;
   /** 振り返り中か（盤の左側のタップで戻る、右側で進む） */
   replay: boolean;
+  /** 直前の手が詰みを逃した手か（振り返りで、そのマスを赤く示す） */
+  missed: boolean;
 }
 
 export interface BoardViewHandlers {
@@ -169,14 +171,15 @@ export class BoardView {
 
   /** 選択・移動先・直前の手の印。駒は置き直さずに付け替えるだけ */
   private renderMarks(model: BoardViewModel): void {
-    const { selection, targets, lastMove, interactive, replay } = model;
+    const { selection, targets, lastMove, interactive, replay, missed } = model;
     this.el.classList.toggle('interactive', interactive);
     this.el.classList.toggle('replay', replay);
     const lastTo = lastMove ? parseUsiMove(lastMove).to : -1;
     const selectedIndex = selection?.kind === 'board' ? selection.index : -1;
     for (let index = 0; index < 81; index++) {
       const cell = this.cell(index);
-      cell.classList.toggle('last', index === lastTo);
+      cell.classList.toggle('last', index === lastTo && !missed);
+      cell.classList.toggle('missed', index === lastTo && missed);
       cell.classList.toggle('selected', index === selectedIndex);
       cell.classList.toggle('target', targets.has(index));
     }

@@ -28,7 +28,8 @@ interface Review {
 type Phase =
   | { kind: 'loading'; message: string }
   | { kind: 'playing'; thinking: boolean; notice?: string }
-  | { kind: 'result'; result: Result; review: Review }
+  /** dialog: 結果のカード（pending: 盤の最後の手を見せてから出す / open / closed: 閉じて振り返り中） */
+  | { kind: 'result'; result: Result; review: Review; dialog: 'pending' | 'open' | 'closed' }
   | { kind: 'error'; message: string };
 
 const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
@@ -38,6 +39,11 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
   'defender-win': '玉方の勝ちになりました',
   giveup: 'ギブアップ',
 };
+
+/** 結果のカードを出すまでの時間。詰ませた手のアニメーションと局面を見せてから出す */
+const RESULT_DIALOG_DELAY_MS = { success: 600, failure: 300 } as const;
+/** カードが出てすぐのタップ（盤を連打していた指）で、外側タップとして閉じないようにする */
+const DIALOG_TAP_GUARD_MS = 300;
 
 /** 玉方の応手を見せるまでの最小待ち時間（攻方の手のアニメーションが終わるのを待つ） */
 const MIN_REPLY_DELAY_MS = 320;
@@ -61,6 +67,11 @@ export class App {
   private selection: Selection = null;
   private pendingPromotion: { promote: string; plain: string } | null = null;
   private confirmGiveup = false;
+  /** 結果を出すたびに増やす（古い結果のカードを出さないため） */
+  private resultSeq = 0;
+  private dialogOpenedAt = 0;
+  /** 今出しているダイアログの HTML（同じなら置き直さず、出てくるアニメーションを繰り返さない） */
+  private overlayHtml = '';
 
   private readonly board: BoardView;
   private readonly header: HTMLElement;
@@ -91,11 +102,26 @@ export class App {
     });
     this.root.querySelector('.app-main')!.appendChild(this.board.el);
     this.panel.addEventListener('click', (e) => this.onAction(e));
-    this.overlay.addEventListener('click', (e) => this.onAction(e));
+    this.overlay.addEventListener('click', (e) => {
+      // 結果のカードの外側をタップしたら閉じて振り返りにする
+      if (e.target === this.overlay && this.phase.kind === 'result' && this.phase.dialog === 'open') {
+        if (performance.now() - this.dialogOpenedAt < DIALOG_TAP_GUARD_MS) return;
+        this.phase = { ...this.phase, dialog: 'closed' };
+        this.render();
+        return;
+      }
+      this.onAction(e);
+    });
     this.root.querySelector('.app-header')!.addEventListener('click', (e) => this.onAction(e));
     this.history.onChange = () => this.renderHeader();
     // PC では左右キーでも振り返りを操作できる
     window.addEventListener('keydown', (e) => {
+      const phase = this.phase;
+      if (phase.kind === 'result' && phase.dialog === 'open' && e.key === 'Escape') {
+        this.phase = { ...phase, dialog: 'closed' };
+        this.render();
+        return;
+      }
       if (this.overlay.hidden === false) return;
       if (e.key === 'ArrowRight') this.stepReview(1);
       else if (e.key === 'ArrowLeft') this.stepReview(-1);
@@ -192,7 +218,7 @@ export class App {
         break;
       case 'success': {
         this.lastAttempt = session.moves.slice();
-        this.phase = { kind: 'result', result: state, review: { line: 'mine', step: this.lastAttempt.length } };
+        this.showResult(state);
         const outcome: Outcome = this.viewedAnswer
           ? 'clear-after-viewing'
           : state.moves <= session.problem.length ? 'shortest' : 'clear';
@@ -201,17 +227,26 @@ export class App {
       }
       case 'failure':
         this.lastAttempt = session.moves.slice();
-        this.phase = {
-          kind: 'result',
-          result: { kind: 'failure', reason: state.reason, missedAt: state.missedAt },
-          review: { line: 'mine', step: this.lastAttempt.length },
-        };
+        this.showResult({ kind: 'failure', reason: state.reason, missedAt: state.missedAt });
         this.history.record(session.problem.id, 'fail');
         break;
       case 'thinking':
         break;
     }
     this.render();
+  }
+
+  /** 結果を出す。盤は自分の手順の最後の局面のまま、少し間を置いて結果のカードを出す */
+  private showResult(result: Result): void {
+    const seq = ++this.resultSeq;
+    this.phase = { kind: 'result', result, review: { line: 'mine', step: this.lastAttempt.length }, dialog: 'pending' };
+    setTimeout(() => {
+      const phase = this.phase;
+      if (seq !== this.resultSeq || phase.kind !== 'result' || phase.dialog !== 'pending') return;
+      this.phase = { ...phase, dialog: 'open' };
+      this.dialogOpenedAt = performance.now();
+      this.render();
+    }, RESULT_DIALOG_DELAY_MS[result.kind]);
   }
 
   private fail(e: unknown): void {
@@ -310,14 +345,24 @@ export class App {
           this.history.record(this.session.problem.id, 'giveup');
         }
         this.viewedAnswer = true;
-        this.phase = { kind: 'result', result: { kind: 'failure', reason: 'giveup' }, review: { line: 'model', step: 0 } };
+        // 自分で解答を見ると決めたので、結果のカードは出さずにすぐ解答の振り返りにする
+        this.resultSeq++;
+        this.phase = {
+          kind: 'result',
+          result: { kind: 'failure', reason: 'giveup' },
+          review: { line: 'model', step: 0 },
+          dialog: 'closed',
+        };
         break;
       case 'line-model':
         if (phase.kind === 'result') {
           // 解答を見たので、この問題の以後のクリアは「解答閲覧後」として記録する
           this.viewedAnswer = true;
-          this.phase = { ...phase, review: { line: 'model', step: 0 } };
+          this.phase = { ...phase, review: { line: 'model', step: 0 }, dialog: 'closed' };
         }
+        break;
+      case 'review':
+        if (phase.kind === 'result') this.phase = { ...phase, dialog: 'closed' };
         break;
       case 'line-mine':
         if (phase.kind === 'result') this.phase = { ...phase, review: { line: 'mine', step: this.lastAttempt.length } };
@@ -347,10 +392,17 @@ export class App {
     this.render();
   }
 
+  /** 振り返りで、詰みを逃した手を表示しているか */
+  private isMissedStep(): boolean {
+    const phase = this.phase;
+    if (phase.kind !== 'result' || phase.result.kind !== 'failure') return false;
+    return phase.review.line === 'mine' && phase.review.step === phase.result.missedAt;
+  }
+
   /** 振り返りで1手戻る（-1）・進む（+1） */
   private stepReview(dir: -1 | 1): void {
     const phase = this.phase;
-    if (phase.kind !== 'result') return;
+    if (phase.kind !== 'result' || phase.dialog !== 'closed') return;
     const max = this.answerLine(phase.review.line).length;
     const step = Math.max(0, Math.min(max, phase.review.step + dir));
     if (step === phase.review.step) return;
@@ -417,7 +469,8 @@ export class App {
       targets: this.targetsFor(this.selection),
       lastMove,
       interactive,
-      replay: phase.kind === 'result' && !this.settingsOpen,
+      replay: phase.kind === 'result' && phase.dialog === 'closed' && !this.settingsOpen,
+      missed: this.isMissedStep(),
     });
   }
 
@@ -441,11 +494,14 @@ export class App {
         break;
       case 'playing': {
         const moved = (this.session?.moves.length ?? 0) > 0;
+        // お知らせ（その駒では王手できない、など）があれば手番の案内の代わりに出す
+        const notice = phase.notice ?? (moved ? undefined : this.problemNotice);
         const status = phase.thinking
           ? '<span class="spinner"></span>玉方が考えています…'
-          : `あなたの手番です。王手をかけてください${this.settings.showLength && p ? `（${p.length}手詰）` : ''}`;
+          : notice
+            ? `<span class="notice">${escapeHtml(notice)}</span>`
+            : `あなたの手番です。王手をかけてください${this.settings.showLength && p ? `（${p.length}手詰）` : ''}`;
         html = `<p class="status">${status}</p>
-          <p class="notice">${phase.notice ?? (this.session?.moves.length ? '' : (this.problemNotice ?? ''))}</p>
           <div class="actions">
             ${btn('retry', 'やり直す', 'secondary', phase.thinking || !moved)}
             ${btn('giveup', '解答を見る', 'secondary', phase.thinking)}
@@ -455,30 +511,16 @@ export class App {
       case 'result': {
         const { result, review } = phase;
         const success = result.kind === 'success';
-        let head: string;
-        if (result.kind === 'success') {
-          const shortest = p ? result.moves <= p.length : true;
-          const tag = this.viewedAnswer ? '解答閲覧後' : shortest ? '最短' : `最短は${p?.length}手`;
-          head = `<p class="result success">✓ ${result.moves}手で詰みました<span class="tag">${tag}</span></p>`;
-        } else {
-          const at = result.missedAt ? `<span class="tag">${result.missedAt}手目</span>` : '';
-          head = `<p class="result failure">✗ ${FAILURE_TEXT[result.reason]}${at}</p>`;
-        }
         const line = this.answerLine(review.line);
-        const missedHere =
-          review.line === 'mine' && result.kind === 'failure' && result.missedAt !== undefined && review.step === result.missedAt;
-        const hint = missedHere
-          ? '<p class="notice missed">▲ この手で詰みを逃しました</p>'
-          : '<p class="notice">盤の左側をタップで戻る・右側で進む</p>';
-        html = `${head}
-          <div class="review-bar">
+        const missed = this.isMissedStep();
+        html = `<div class="review-bar">
+            <span class="mark ${success ? 'success' : 'failure'}" aria-label="${success ? '正解' : '不正解'}">${success ? '✓' : '✗'}</span>
             <div class="segmented" role="tablist">
               <button type="button" role="tab" class="${review.line === 'mine' ? 'on' : ''}" data-action="line-mine"${this.lastAttempt.length ? '' : ' disabled'}>あなたの手順</button>
               <button type="button" role="tab" class="${review.line === 'model' ? 'on' : ''}" data-action="line-model">解答（${p?.length}手）</button>
             </div>
-            <span class="step">${review.step}/${line.length}手</span>
+            <span class="step${missed ? ' missed' : ''}"${missed ? ' title="この手で詰みを逃しました"' : ''}>${missed ? '▲' : ''}${review.step}/${line.length}手</span>
           </div>
-          ${hint}
           <div class="actions">
             ${btn('retry', '再挑戦', success ? 'secondary' : 'primary')}
             ${btn('next', '次の問題 →', success ? 'primary' : 'secondary')}
@@ -518,10 +560,44 @@ export class App {
     } else if (this.settingsOpen) {
       this.overlay.innerHTML = this.settingsDialogHtml();
       this.overlay.hidden = false;
+    } else if (this.phase.kind === 'result' && this.phase.dialog === 'open') {
+      // 結果のカードは画面の下寄りに出し、背景は薄く暗くして盤の上側（玉の周り）が見えるようにする
+      const html = this.resultDialogHtml(this.phase.result);
+      if (html !== this.overlayHtml || this.overlay.hidden) this.overlay.innerHTML = html;
+      this.overlayHtml = html;
+      this.overlay.classList.add('sheet');
+      this.overlay.hidden = false;
+      return;
     } else {
       this.overlay.hidden = true;
       this.overlay.innerHTML = '';
     }
+    this.overlayHtml = '';
+    this.overlay.classList.remove('sheet');
+  }
+
+  /** 結果のカード。次にやること（正解なら次の問題、不正解なら再挑戦）を一番大きなボタンにする */
+  private resultDialogHtml(result: Result): string {
+    const p = this.problem;
+    const btn = (action: string, label: string, cls: string) =>
+      `<button type="button" class="btn ${cls}" data-action="${action}">${label}</button>`;
+    if (result.kind === 'success') {
+      const shortest = p ? result.moves <= p.length : true;
+      const tag = this.viewedAnswer ? '解答閲覧後' : shortest ? '最短' : `最短は${p?.length}手`;
+      return `<div class="dialog result-card" role="dialog" aria-label="正解">
+          <p class="result success">✓ ${result.moves}手で詰みました</p>
+          <p><span class="tag success">${tag}</span></p>
+          ${btn('next', '次の問題 →', 'primary main')}
+          <div class="actions">${btn('retry', '再挑戦', 'secondary')}${btn('review', '振り返る', 'secondary')}</div>
+        </div>`;
+    }
+    const at = result.missedAt ? `<p><span class="tag failure">${result.missedAt}手目</span></p>` : '';
+    return `<div class="dialog result-card" role="dialog" aria-label="不正解">
+        <p class="result failure">✗ ${FAILURE_TEXT[result.reason]}</p>
+        ${at}
+        ${btn('retry', '再挑戦', 'primary main')}
+        <div class="actions">${btn('next', '次の問題', 'secondary')}${btn('line-model', '解答を見る', 'secondary')}</div>
+      </div>`;
   }
 
   private settingsDialogHtml(): string {
