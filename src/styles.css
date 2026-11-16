@@ -14,7 +14,8 @@
   --selected: rgba(181, 69, 43, 0.35);
   --last: rgba(255, 214, 102, 0.6);
   --radius: 10px;
-  --col: min(100vw - 16px, 520px, (100dvh - 280px) * 0.82);
+  /* 盤の幅。スマホでは画面の幅いっぱい、縦が足りない画面では縦に合わせる */
+  --col: min(100vw - 8px, 560px, (100dvh - 300px) * 0.86);
   font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
   color: var(--ink);
   background: var(--bg);
@@ -28,12 +29,14 @@
 body {
   margin: 0;
   min-height: 100dvh;
+  /* 引っ張って再読み込み・スクロールの連鎖を止める（アプリとして使うとき誤操作になる） */
+  overscroll-behavior: none;
 }
 
 #app {
   width: max(var(--col), 300px);
   margin: 0 auto;
-  padding: 8px 0 24px;
+  padding: max(6px, env(safe-area-inset-top)) 0 max(16px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -82,79 +85,100 @@ button {
 }
 
 /* ---- 盤と駒台 ---- */
+@font-face {
+  /* 駒の文字だけを収めた Noto Serif JP Bold（public/fonts、SIL OFL）。端末によらず同じ字形で表示する */
+  font-family: 'Koma';
+  font-weight: 700;
+  font-display: block;
+  src: url('/fonts/noto-serif-jp-pieces.woff2') format('woff2');
+}
+
 .board-area {
   container-type: inline-size;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  /* 1マスの大きさ。盤の左右の余白と段の目盛りを除いた幅を9等分する */
+  --frame-pad: 1.2cqw;
+  --rank-w: 3.6cqw;
+  --cell: calc((100cqw - var(--frame-pad) * 2 - var(--rank-w) - 4px) / 9);
+  --cell-h: calc(var(--cell) * 1.09);
 }
+
 .hand {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 11cqw;
-  padding: 2px 8px;
-  background: var(--stand);
+  gap: 0;
+  min-height: calc(var(--cell-h) + 6px);
+  padding: 3px var(--frame-pad);
+  background: linear-gradient(180deg, #b98a4b, #a87a3e);
   border-radius: var(--radius);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
   overflow-x: auto;
+  scrollbar-width: none;
 }
 .hand-top {
   flex-direction: row-reverse;
 }
-.hand-top .hand-piece .hand-char {
-  transform: rotate(180deg);
-}
 .hand-label {
   font-size: 3.2cqw;
-  color: #4a3420;
+  color: #f5e6c8;
   white-space: nowrap;
   font-family: system-ui, sans-serif;
+  margin: 0 1.5cqw;
 }
 .hand-none {
   font-size: 3cqw;
-  color: #5d4228;
+  color: #f0dcb8;
+  opacity: 0.8;
 }
 .hand-piece {
   position: relative;
+  flex: none;
   border: none;
   background: transparent;
-  width: 9.6cqw;
-  height: 10cqw;
-  font-size: 6.4cqw;
-  line-height: 1;
-  border-radius: 6px;
+  width: var(--cell);
+  height: var(--cell-h);
   padding: 0;
+  border-radius: 6px;
 }
 .interactive .hand-bottom .hand-piece {
   cursor: pointer;
 }
-.hand-piece.selected {
-  background: var(--selected);
-}
 .hand-count {
   position: absolute;
-  right: 0;
+  right: -2px;
   bottom: 0;
-  font-size: 3cqw;
+  z-index: 1;
+  font-size: calc(var(--cell) * 0.3);
+  line-height: 1.25;
   font-family: system-ui, sans-serif;
   font-weight: 700;
   background: var(--ink);
   color: #fff;
   border-radius: 999px;
-  min-width: 3.6cqw;
-  padding: 0 0.6cqw;
+  min-width: 1.3em;
+  padding: 0 0.3em;
+}
+.hand-top .hand-count {
+  right: auto;
+  left: -2px;
 }
 
 .board-frame {
-  background: var(--wood-dark);
+  background: linear-gradient(160deg, #d9ae62, #c99a4e);
   border-radius: var(--radius);
-  padding: 0.8cqw 0.8cqw 1.6cqw 1.6cqw;
+  padding: 0 var(--frame-pad) var(--frame-pad);
+  box-shadow: 0 2px 6px rgba(60, 35, 10, 0.25);
 }
 .file-labels {
   display: grid;
   grid-template-columns: repeat(9, 1fr);
-  margin-right: 4.2cqw;
-  font-size: 2.8cqw;
+  margin-right: var(--rank-w);
+  padding: 0 2px;
+  font-size: 2.6cqw;
+  line-height: 3.8cqw;
   text-align: center;
   color: #5d4228;
   font-family: system-ui, sans-serif;
@@ -165,38 +189,36 @@ button {
 .rank-labels {
   display: grid;
   grid-template-rows: repeat(9, 1fr);
-  width: 4.2cqw;
-  font-size: 2.8cqw;
+  width: var(--rank-w);
+  padding: 2px 0;
+  font-size: 2.6cqw;
   text-align: center;
   align-items: center;
   color: #5d4228;
 }
 .board {
-  flex: 1;
+  position: relative;
   display: grid;
-  grid-template-columns: repeat(9, 1fr);
-  grid-template-rows: repeat(9, 1fr);
-  aspect-ratio: 9 / 9.8;
-  background: var(--wood);
+  grid-template-columns: repeat(9, var(--cell));
+  grid-template-rows: repeat(9, var(--cell-h));
   border: 2px solid var(--line);
+  /* 星（3・6筋と3・6段の交点）と木目 */
+  background:
+    radial-gradient(circle at 33.333% 33.333%, var(--line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 66.667% 33.333%, var(--line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 33.333% 66.667%, var(--line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 66.667% 66.667%, var(--line) 0 2px, transparent 2.5px),
+    repeating-linear-gradient(92deg, rgba(120, 75, 20, 0.05) 0 3px, transparent 3px 11px),
+    linear-gradient(170deg, #f0d193, #e5bd76);
 }
 .cell {
-  border: 0.5px solid rgba(59, 42, 23, 0.75);
+  border: 0.5px solid rgba(59, 42, 23, 0.7);
   background: transparent;
   padding: 0;
-  font-size: 7.2cqw;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   min-width: 0;
-}
-.cell.opp {
-  transform: rotate(180deg);
-}
-.cell.promoted {
-  color: var(--accent);
 }
 .cell.last {
   background: var(--last);
@@ -205,15 +227,122 @@ button {
   background: var(--selected);
 }
 .cell.target {
-  background-image: radial-gradient(circle, var(--target) 0 28%, transparent 30%);
+  background-image: radial-gradient(circle, var(--target) 0 22%, transparent 24%);
 }
-.cell.target.piece {
+.cell.target[data-piece='opp'] {
   background-image: none;
-  box-shadow: inset 0 0 0 3px var(--target);
+  background-color: var(--target);
 }
-.interactive .cell.own,
+.interactive .cell[data-piece='own'],
 .interactive .cell.target {
   cursor: pointer;
+}
+
+/* 駒の層。タップは下のマスが受ける */
+.pieces {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.pieces > .pc,
+.pieces > .impact {
+  position: absolute;
+  left: calc(var(--x) * var(--cell));
+  top: calc(var(--y) * var(--cell-h));
+  width: var(--cell);
+  height: var(--cell-h);
+}
+.hand-piece > .pc {
+  position: absolute;
+  inset: 0;
+}
+
+/*
+  駒: .pc（位置・運ぶ動き）> .pc-face（裏返す・回す動き、影）> .pc-body（形・向き・持ち上げ）
+  駒の大きさは実物と同じく駒の種類で少しずつ変える
+*/
+.pc {
+  --s: 0.94;
+  will-change: transform;
+}
+.pc.t-K {
+  --s: 1;
+}
+.pc.t-R,
+.pc.t-B {
+  --s: 0.97;
+}
+.pc.t-N {
+  --s: 0.91;
+}
+.pc.t-L {
+  --s: 0.88;
+}
+.pc.t-P {
+  --s: 0.86;
+}
+.pc-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 3%;
+  filter: drop-shadow(0 0 0.6px rgba(70, 42, 12, 0.95)) drop-shadow(0 1.5px 1.2px rgba(40, 22, 5, 0.4));
+}
+.pc-body {
+  width: calc(88% * var(--s));
+  height: calc(92% * var(--s));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 14%;
+  clip-path: polygon(50% 0, 84% 13%, 100% 100%, 0 100%, 16% 13%);
+  background:
+    linear-gradient(100deg, rgba(255, 255, 255, 0.35), transparent 40%, rgba(120, 70, 10, 0.1)),
+    linear-gradient(180deg, #f8e2a8, #ecc680);
+  transition: transform 0.12s ease-out;
+}
+.pc.flip .pc-body {
+  transform: rotate(180deg);
+}
+.pc-char {
+  font-family: 'Koma', 'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', serif;
+  font-weight: 700;
+  font-size: calc(var(--cell) * 0.62 * var(--s));
+  line-height: 1;
+  color: #1d130a;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pc.promoted .pc-char {
+  color: #b3261e;
+}
+/* 選んだ駒は持ち上げる */
+.pc.selected .pc-body,
+.hand-piece.selected .pc-body {
+  transform: translateY(-9%) scale(1.07);
+}
+.pc.selected .pc-face,
+.hand-piece.selected .pc-face,
+.pc.moving .pc-face,
+.pc.flying .pc-face {
+  filter: drop-shadow(0 0 0.6px rgba(70, 42, 12, 0.95)) drop-shadow(0 5px 4px rgba(40, 22, 5, 0.35));
+}
+.pc.victim {
+  z-index: 0;
+}
+.pc.moving {
+  z-index: 2;
+}
+.pc.flying {
+  z-index: 3;
+}
+.impact {
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255, 240, 200, 0.9), 0 0 12px 4px rgba(255, 210, 120, 0.6);
+  pointer-events: none;
 }
 
 /* ---- 下部パネル ---- */

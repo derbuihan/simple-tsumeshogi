@@ -1,5 +1,8 @@
+import { parseUsiMove } from '../shogi/move';
 import { pieceChar, pieceName } from '../shogi/notation';
-import { HAND_TYPES, opposite, type Color, type HandType, type Position } from '../shogi/types';
+import { positionKey } from '../shogi/sfen';
+import { HAND_TYPES, opposite, type Color, type HandType, type Piece, type Position } from '../shogi/types';
+import { detectStep, type Step } from './step';
 
 export type Selection = { kind: 'board'; index: number } | { kind: 'hand'; type: HandType } | null;
 
@@ -10,8 +13,8 @@ export interface BoardViewModel {
   selection: Selection;
   /** 選択中の駒が王手で動けるマス */
   targets: ReadonlySet<number>;
-  /** 直前の指し手の移動先 */
-  lastTo: number | null;
+  /** この局面に至った直前の指し手（USI）。1手進んだときはこの手をアニメーションで見せる */
+  lastMove: string | null;
   /** 入力を受け付けるか */
   interactive: boolean;
 }
@@ -24,18 +27,36 @@ export interface BoardViewHandlers {
 const ZEN = ['', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
 const KAN = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
+/** 駒の要素。upright = 手前向き（攻方の駒・攻方の駒台） */
+function pieceHtml(p: Piece, upright: boolean, attrs = ''): string {
+  const cls = `pc t-${p.type}${p.promoted ? ' promoted' : ''}${upright ? '' : ' flip'}`;
+  return `<div class="${cls}"${attrs}><div class="pc-face"><div class="pc-body"><span class="pc-char">${pieceChar(p)}</span></div></div></div>`;
+}
+
+const center = (r: DOMRect) => ({ x: r.left + r.width / 2, y: r.top + r.height / 2 });
+const settle = (a: Animation) => a.finished.then(() => undefined, () => undefined);
+
 /**
  * 盤と駒台の描画。盤の位置と大きさは状態によらず固定し、中身だけを描き替える。
  * 攻方が後手の問題では盤を180°回転させて、常に攻方を手前に表示する。
+ *
+ * 盤は2層。下の層（.cell）がタップと印（選択・移動先・直前の手）を受け持ち、
+ * 上の層（.pieces）に駒を置く。局面が変わったときだけ駒を置き直し、
+ * 直前の局面から1手進んだのであればその手をアニメーションで見せる。
  */
 export class BoardView {
   readonly el: HTMLElement;
   private readonly topHand: HTMLElement;
   private readonly bottomHand: HTMLElement;
   private readonly grid: HTMLElement;
+  private readonly pieces: HTMLElement;
   private readonly fileLabels: HTMLElement;
   private readonly rankLabels: HTMLElement;
   private model: BoardViewModel | null = null;
+  /** 今置いている駒の局面と向き（同じなら駒を置き直さない） */
+  private key = '';
+  /** 駒を置き直すたびに増やす。古いアニメーションの続きを止めるのに使う */
+  private generation = 0;
 
   constructor(private readonly handlers: BoardViewHandlers) {
     this.el = document.createElement('div');
@@ -45,7 +66,7 @@ export class BoardView {
       <div class="board-frame">
         <div class="file-labels" aria-hidden="true"></div>
         <div class="board-with-ranks">
-          <div class="board" role="grid" aria-label="将棋盤"></div>
+          <div class="board" role="grid" aria-label="将棋盤"><div class="pieces" aria-hidden="true"></div></div>
           <div class="rank-labels" aria-hidden="true"></div>
         </div>
       </div>
@@ -53,6 +74,7 @@ export class BoardView {
     this.topHand = this.el.querySelector('.hand-top')!;
     this.bottomHand = this.el.querySelector('.hand-bottom')!;
     this.grid = this.el.querySelector('.board')!;
+    this.pieces = this.el.querySelector('.pieces')!;
     this.fileLabels = this.el.querySelector('.file-labels')!;
     this.rankLabels = this.el.querySelector('.rank-labels')!;
 
@@ -61,7 +83,7 @@ export class BoardView {
       cell.type = 'button';
       cell.className = 'cell';
       cell.dataset.display = String(d);
-      this.grid.appendChild(cell);
+      this.grid.insertBefore(cell, this.pieces);
     }
     this.grid.addEventListener('click', (e) => {
       const cell = (e.target as HTMLElement).closest<HTMLElement>('.cell');
@@ -81,53 +103,224 @@ export class BoardView {
     return this.model?.bottom === 'w';
   }
 
-  /** 表示上の位置 → 局面の index */
+  /** 表示上の位置 → 局面の index（反転は自分自身が逆変換） */
   private toIndex(display: number): number {
     return this.flipped ? 80 - display : display;
   }
 
-  render(model: BoardViewModel): void {
-    this.model = model;
-    const { position, bottom, selection, targets, lastTo, interactive } = model;
-    this.el.classList.toggle('interactive', interactive);
+  private cell(index: number): HTMLElement {
+    return this.grid.children[this.toIndex(index)] as HTMLElement;
+  }
 
+  private handOf(color: Color): HTMLElement {
+    return color === this.model!.bottom ? this.bottomHand : this.topHand;
+  }
+
+  private handPiece(color: Color, type: HandType): HTMLElement | null {
+    return this.handOf(color).querySelector<HTMLElement>(`.hand-piece[data-type="${type}"]`);
+  }
+
+  render(model: BoardViewModel): void {
+    const prev = this.model;
+    this.model = model;
+    const key = `${positionKey(model.position)} ${model.bottom}`;
+    if (key !== this.key) {
+      this.key = key;
+      const step =
+        prev && prev.bottom === model.bottom && !reducedMotion()
+          ? detectStep(prev.position, model.position, model.lastMove)
+          : null;
+      // 駒打ちの移動元は、置き直す前の駒台の駒の位置
+      const dropFrom = step?.move.kind === 'drop' ? this.handPiece(step.mover, step.move.type)?.getBoundingClientRect() : undefined;
+      const handBefore = step ? prev!.position.hands[step.mover] : null;
+      this.generation++;
+      if (!prev || prev.bottom !== model.bottom) this.renderLabels();
+      this.renderPieces(model.position, model.bottom);
+      this.renderHand(this.bottomHand, model.position, model.bottom, '攻方', true);
+      this.renderHand(this.topHand, model.position, opposite(model.bottom), '玉方', false);
+      if (step) void this.animate(step, dropFrom, handBefore!);
+    }
+    this.renderMarks(model);
+  }
+
+  private renderLabels(): void {
     // 筋・段の目盛り（反転時は逆順）
     const files = this.flipped ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : [9, 8, 7, 6, 5, 4, 3, 2, 1];
     const ranks = this.flipped ? [8, 7, 6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6, 7, 8];
     this.fileLabels.innerHTML = files.map((f) => `<span>${ZEN[f]}</span>`).join('');
     this.rankLabels.innerHTML = ranks.map((r) => `<span>${KAN[r]}</span>`).join('');
-
-    const cells = this.grid.children;
-    for (let d = 0; d < 81; d++) {
-      const index = this.toIndex(d);
-      const cell = cells[d] as HTMLElement;
-      const piece = position.board[index];
-      cell.textContent = piece ? pieceChar(piece) : '';
-      cell.className = 'cell';
-      if (piece) {
-        cell.classList.add('piece', piece.color === bottom ? 'own' : 'opp');
-        if (piece.promoted) cell.classList.add('promoted');
-      }
-      if (selection?.kind === 'board' && selection.index === index) cell.classList.add('selected');
-      if (targets.has(index)) cell.classList.add('target');
-      if (lastTo === index) cell.classList.add('last');
-      cell.setAttribute('aria-label', piece ? `${pieceName(piece.type, piece.promoted)}` : '空き');
-    }
-
-    this.renderHand(this.bottomHand, position, bottom, selection, '攻方');
-    this.renderHand(this.topHand, position, opposite(bottom), null, '玉方');
   }
 
-  private renderHand(el: HTMLElement, pos: Position, color: Color, selection: Selection, label: string): void {
+  private renderPieces(position: Position, bottom: Color): void {
+    let html = '';
+    for (let index = 0; index < 81; index++) {
+      const piece = position.board[index];
+      const cell = this.cell(index);
+      cell.setAttribute('aria-label', piece ? pieceName(piece.type, piece.promoted) : '空き');
+      cell.dataset.piece = piece ? (piece.color === bottom ? 'own' : 'opp') : '';
+      if (!piece) continue;
+      const d = this.toIndex(index);
+      html += pieceHtml(piece, piece.color === bottom, ` data-index="${index}" style="--x:${d % 9};--y:${Math.floor(d / 9)}"`);
+    }
+    this.pieces.innerHTML = html;
+  }
+
+  private renderHand(el: HTMLElement, pos: Position, color: Color, label: string, upright: boolean): void {
     const items = HAND_TYPES.filter((t) => pos.hands[color][t] > 0)
       .map((t) => {
         const n = pos.hands[color][t];
-        const selected = selection?.kind === 'hand' && selection.type === t ? ' selected' : '';
-        return `<button type="button" class="hand-piece${selected}" data-color="${color}" data-type="${t}" aria-label="${pieceName(t)}${n}枚">
-            <span class="hand-char">${pieceName(t)}</span>${n > 1 ? `<span class="hand-count">${n}</span>` : ''}
+        return `<button type="button" class="hand-piece" data-color="${color}" data-type="${t}" aria-label="${pieceName(t)}${n}枚">
+            ${pieceHtml({ color, type: t, promoted: false }, upright)}${n > 1 ? `<span class="hand-count">${n}</span>` : ''}
           </button>`;
       })
       .join('');
-    el.innerHTML = `<span class="hand-label">${label}${color === 'b' ? '☗' : '☖'}</span>${items || '<span class="hand-none">なし</span>'}`;
+    el.innerHTML = `<span class="hand-label">${color === 'b' ? '☗' : '☖'}${label}</span>${items || '<span class="hand-none">持ち駒なし</span>'}`;
+  }
+
+  /** 選択・移動先・直前の手の印。駒は置き直さずに付け替えるだけ */
+  private renderMarks(model: BoardViewModel): void {
+    const { selection, targets, lastMove, interactive } = model;
+    this.el.classList.toggle('interactive', interactive);
+    const lastTo = lastMove ? parseUsiMove(lastMove).to : -1;
+    const selectedIndex = selection?.kind === 'board' ? selection.index : -1;
+    for (let index = 0; index < 81; index++) {
+      const cell = this.cell(index);
+      cell.classList.toggle('last', index === lastTo);
+      cell.classList.toggle('selected', index === selectedIndex);
+      cell.classList.toggle('target', targets.has(index));
+    }
+    for (const pc of this.pieces.querySelectorAll<HTMLElement>('.pc[data-index]')) {
+      pc.classList.toggle('selected', Number(pc.dataset.index) === selectedIndex);
+    }
+    for (const btn of this.bottomHand.querySelectorAll<HTMLElement>('.hand-piece')) {
+      btn.classList.toggle('selected', selection?.kind === 'hand' && selection.type === btn.dataset.type);
+    }
+  }
+
+  // ---- アニメーション ----
+
+  /**
+   * 1手のアニメーション。駒を移動元から持ち上げて運び、置いた瞬間に軽く沈ませる。
+   * 取った駒は指した側の駒台へ運び、成る手は置いた後に駒を裏返す。
+   */
+  private async animate(step: Step, dropFrom: DOMRect | undefined, handBefore: Position['hands']['b']): Promise<void> {
+    const gen = this.generation;
+    const { move, mover, piece, captured } = step;
+    const el = this.pieces.querySelector<HTMLElement>(`.pc[data-index="${move.to}"]`);
+    const fromRect = move.kind === 'move' ? this.cell(move.from).getBoundingClientRect() : dropFrom;
+    if (!el || !fromRect) return;
+
+    const toRect = el.getBoundingClientRect();
+    const a = center(fromRect);
+    const b = center(toRect);
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    const slideMs = Math.min(300, 170 + Math.hypot(dx, dy) * 0.35);
+    const flightMs = 260;
+
+    // 成る手は、運んでいる間は成る前の駒を見せる
+    const promoting = move.kind === 'move' && move.promote;
+    if (promoting) setFace(el, piece);
+
+    // 取られる駒は、動かす駒の下に一旦残しておく
+    let victim: HTMLElement | null = null;
+    let handTarget: HTMLElement | null = null;
+    if (captured) {
+      victim = fragment(pieceHtml(captured, captured.color === this.model!.bottom, ` style="${el.getAttribute('style')}"`));
+      victim.classList.add('victim');
+      this.pieces.appendChild(victim);
+      const type = (captured.type === 'K' ? null : captured.type) as HandType | null;
+      handTarget = type ? this.handPiece(mover, type) : null;
+      // 駒台に新しく増える駒は、取った駒が届くまで見せない
+      if (handTarget && type && handBefore[type] === 0) {
+        handTarget.animate([{ opacity: 0 }, { opacity: 0 }], { duration: slideMs + flightMs });
+      }
+    }
+
+    el.classList.add('moving');
+    await settle(
+      el.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px) scale(1.12)`, easing: 'cubic-bezier(.25,.8,.35,1)' },
+          { transform: 'translate(0, 0) scale(1.12)', offset: 0.78, easing: 'cubic-bezier(.5,0,.75,0)' },
+          { transform: 'translate(0, 0) scale(1)' },
+        ],
+        { duration: slideMs },
+      ),
+    );
+    el.classList.remove('moving');
+    if (gen !== this.generation) return;
+
+    // 着手：盤に駒を打ちつけた手応え
+    this.impact(el);
+    navigator.vibrate?.(12);
+
+    const tasks: Promise<void>[] = [];
+    if (promoting) tasks.push(this.flipPromote(el, { ...piece, promoted: true }));
+    if (victim) tasks.push(this.carryToHand(victim, captured!, handTarget, flightMs));
+    await Promise.all(tasks);
+  }
+
+  /** 着手した位置に波紋を出す */
+  private impact(el: HTMLElement): void {
+    const ring = fragment(`<div class="impact" style="${el.getAttribute('style')}"></div>`);
+    this.pieces.appendChild(ring);
+    void settle(
+      ring.animate(
+        [
+          { transform: 'scale(0.6)', opacity: 0.55 },
+          { transform: 'scale(1.35)', opacity: 0 },
+        ],
+        { duration: 260, easing: 'ease-out' },
+      ),
+    ).then(() => ring.remove());
+  }
+
+  /** 駒を裏返して成駒にする */
+  private async flipPromote(el: HTMLElement, promoted: Piece): Promise<void> {
+    const face = el.querySelector<HTMLElement>('.pc-face')!;
+    await settle(face.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: 90, easing: 'ease-in' }));
+    setFace(el, promoted);
+    await settle(face.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 120, easing: 'ease-out' }));
+  }
+
+  /** 取った駒を、向きを変えながら駒台へ運ぶ */
+  private async carryToHand(victim: HTMLElement, captured: Piece, target: HTMLElement | null, ms: number): Promise<void> {
+    setFace(victim, { ...captured, promoted: false });
+    victim.classList.add('flying');
+    const from = center(victim.getBoundingClientRect());
+    const to = target ? center(target.getBoundingClientRect()) : from;
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const face = victim.querySelector<HTMLElement>('.pc-face')!;
+    await Promise.all([
+      settle(
+        victim.animate(
+          [
+            { transform: 'translate(0, 0) scale(1)' },
+            { transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(1.15)` },
+            { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: target ? 1 : 0 },
+          ],
+          { duration: ms, easing: 'cubic-bezier(.45,0,.25,1)', fill: 'forwards' },
+        ),
+      ),
+      settle(face.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(180deg)' }], { duration: ms, easing: 'ease-in-out', fill: 'forwards' })),
+    ]);
+    victim.remove();
+    target?.animate([{ transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 160, easing: 'ease-out' });
   }
 }
+
+function fragment(html: string): HTMLElement {
+  const t = document.createElement('template');
+  t.innerHTML = html;
+  return t.content.firstElementChild as HTMLElement;
+}
+
+/** 駒の文字と成りの表示を差し替える */
+function setFace(el: HTMLElement, p: Piece): void {
+  el.querySelector('.pc-char')!.textContent = pieceChar(p);
+  el.classList.toggle('promoted', p.promoted);
+}
+
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;

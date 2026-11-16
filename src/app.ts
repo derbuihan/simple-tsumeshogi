@@ -30,8 +30,8 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
   giveup: 'ギブアップ',
 };
 
-/** 玉方の応手を見せるための最小待ち時間 */
-const MIN_REPLY_DELAY_MS = 350;
+/** 玉方の応手を見せるまでの最小待ち時間（攻方の手のアニメーションが終わるのを待つ） */
+const MIN_REPLY_DELAY_MS = 550;
 
 const STATUS_LABEL = { untried: '初挑戦', unsolved: '未正解', solved: '正解済み' } as const;
 const SYNC_LABEL = { synced: '履歴は同期済み', pending: '履歴を同期中', offline: '履歴はこの端末に保存中（未同期）' } as const;
@@ -381,16 +381,15 @@ export class App {
     const p = this.problem;
     if (!p) return;
     let position: Position;
-    let lastTo: number | null = null;
+    let lastMove: string | null = null;
     const phase = this.phase;
     if (phase.kind === 'answer') {
       const line = this.answerLine(phase.line);
       position = applyMoves(parseSfen(p.sfen), line.slice(0, phase.step));
-      if (phase.step > 0) lastTo = parseUsiMove(line[phase.step - 1]).to;
+      if (phase.step > 0) lastMove = line[phase.step - 1];
     } else if (this.session) {
       position = this.session.position;
-      const moves = this.session.moves;
-      if (moves.length) lastTo = parseUsiMove(moves[moves.length - 1]).to;
+      lastMove = this.session.moves.at(-1) ?? null;
     } else {
       position = parseSfen(p.sfen);
     }
@@ -400,7 +399,7 @@ export class App {
       bottom: p.attacker,
       selection: this.selection,
       targets: this.targetsFor(this.selection),
-      lastTo,
+      lastMove,
       interactive,
     });
   }
