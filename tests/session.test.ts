@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EngineLike, EnginePosition } from '../src/engine/types';
 import { parseInfo, type ThinkResult } from '../src/engine/usi';
 import { parseProblemLine } from '../src/game/problem';
-import { Session } from '../src/game/session';
+import { graceMoves, Session } from '../src/game/session';
 
 // mate3/000.txt の1問目（後手が攻方、解: B*5g 4h5h 7i6i）
 const LINE =
@@ -79,10 +79,85 @@ describe('Session', () => {
       '': { checks: ['B*5g', '6h5g+'] },
       '6h5g+': { legal: ['4h5g'], think: { bestmove: '4h5g', score: { kind: 'cp', value: -1200 }, pv: [] } },
     });
-    const s = new Session(problem, engine);
+    // 乱数 0 → 猶予なしで、すぐ不正解
+    const s = new Session(problem, engine, { random: () => 0 });
     await s.start();
-    expect(await s.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate' });
+    expect(await s.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
     expect(s.moves).toEqual(['6h5g+']);
+  });
+
+  const cp = (value: number, bestmove: string): ThinkResult => ({ bestmove, score: { kind: 'cp', value }, pv: [bestmove] });
+
+  it('惜しい逃し方なら猶予の手数だけ続けてから不正解（逃した手を覚えている）', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h3g'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+      '6h5g+ 4h5g B*6f': { legal: ['5g4h'], think: cp(-2400, '5g4h') },
+      '6h5g+ 4h5g B*6f 5g4h': { checks: ['6f8h'] },
+      '6h5g+ 4h5g B*6f 5g4h 6f8h': { legal: ['4h3h'], think: cp(-2300, '4h3h') },
+    });
+    // 乱数 0.99 → 最大の猶予（2手）
+    const s = new Session(problem, engine, { random: () => 0.99 });
+    await s.start();
+    expect((await s.playAttacker('6h5g+')).kind).toBe('attacker-turn');
+    expect((await s.playAttacker('B*6f')).kind).toBe('attacker-turn');
+    expect(await s.playAttacker('6f8h')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
+    expect(s.moves).toEqual(['6h5g+', '4h5g', 'B*6f', '5g4h', '6f8h']);
+  });
+
+  it('猶予中に評価値が崩れたら猶予を残していても不正解', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+      '6h5g+ 4h5g B*6f': { legal: ['5g4h'], think: cp(800, '5g4h') },
+    });
+    const s = new Session(problem, engine, { random: () => 0.99 });
+    await s.start();
+    await s.playAttacker('6h5g+');
+    expect(await s.playAttacker('B*6f')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
+  });
+
+  it('猶予中に本当に詰ませれば成功', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+      '6h5g+ 4h5g B*6f': { legal: [] },
+    });
+    const s = new Session(problem, engine, { random: () => 0.5 });
+    await s.start();
+    await s.playAttacker('6h5g+');
+    expect(await s.playAttacker('B*6f')).toEqual({ kind: 'success', moves: 3 });
+  });
+
+  it('猶予中に詰みが見つかれば（探索の見落とし）猶予を取り消して続行', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+      '6h5g+ 4h5g B*6f': { legal: ['5g4h'], think: mated(2, '5g4h') },
+      '6h5g+ 4h5g B*6f 5g4h': { checks: ['6f8h'] },
+      '6h5g+ 4h5g B*6f 5g4h 6f8h': { legal: [] },
+    });
+    // 猶予1手。見落としでなければ2手目で不正解になるところ
+    const s = new Session(problem, engine, { random: () => 0.3 });
+    await s.start();
+    await s.playAttacker('6h5g+');
+    expect((await s.playAttacker('B*6f')).kind).toBe('attacker-turn');
+    expect(await s.playAttacker('6f8h')).toEqual({ kind: 'success', moves: 5 });
+  });
+
+  it('猶予中に王手が無くなったら、理由は「詰みを逃した」', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5g': { checks: [] },
+    });
+    const s = new Session(problem, engine, { random: () => 0.99 });
+    await s.start();
+    expect(await s.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
   });
 
   it('探索結果が無い（時間切れ相当）も不正解', async () => {
@@ -130,6 +205,28 @@ describe('Session', () => {
     let n = 0;
     while (st.kind === 'attacker-turn' && n++ < 20) st = await s.playAttacker(st.checks[0]);
     expect(st).toEqual({ kind: 'failure', reason: 'repetition' });
+  });
+});
+
+describe('graceMoves', () => {
+  const cpScore = (value: number) => ({ kind: 'cp' as const, value });
+  it('明らかに逃した（玉方が互角以上・玉方が詰ます・探索結果なし）なら猶予なし', () => {
+    for (const r of [0, 0.5, 0.99]) {
+      expect(graceMoves(cpScore(500), r)).toBe(0);
+      expect(graceMoves(cpScore(-200), r)).toBe(0);
+      expect(graceMoves({ kind: 'mate', value: 9, sign: '+' }, r)).toBe(0);
+      expect(graceMoves(null, r)).toBe(0);
+    }
+  });
+  it('攻方が優勢なほど長く、最大2手', () => {
+    const mean = (v: number) => {
+      let sum = 0;
+      for (let i = 0; i < 100; i++) sum += graceMoves(cpScore(v), i / 100);
+      return sum / 100;
+    };
+    expect(mean(-600)).toBeLessThan(mean(-1500));
+    expect(mean(-1500)).toBeLessThan(mean(-3000));
+    for (let i = 0; i < 100; i++) expect(graceMoves(cpScore(-30000), i / 100)).toBeLessThanOrEqual(2);
   });
 });
 

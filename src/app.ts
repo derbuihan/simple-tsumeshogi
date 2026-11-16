@@ -7,20 +7,29 @@ import { loadIndex, loadProblem, PROBLEM_LENGTHS } from './problems/loader';
 import { selectProblem } from './problems/selector';
 import { loadCursor, ORDER_LABELS, saveCursor, saveSettings, type QuestionOrder, type Settings } from './settings';
 import { applyMoves, parseUsiMove } from './shogi/move';
-import { moveToJapanese, pieceChar } from './shogi/notation';
+import { pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
+
+/** 挑戦の結果 */
+type Result =
+  | { kind: 'success'; moves: number }
+  /** missedAt: 詰みを逃した攻方の手（1始まり） */
+  | { kind: 'failure'; reason: FailureReason | 'giveup'; missedAt?: number };
+
+/** 結果が出た後の振り返り。盤の左右をタップして手順を1手ずつ戻る・進む */
+interface Review {
+  line: 'model' | 'mine';
+  step: number;
+}
 
 /** 画面の状態。盤は常に同じ場所に表示し、下のパネルだけを切り替える */
 type Phase =
   | { kind: 'loading'; message: string }
   | { kind: 'playing'; thinking: boolean; notice?: string }
-  | { kind: 'success'; moves: number }
-  | { kind: 'failure'; reason: FailureReason | 'giveup' }
-  | { kind: 'answer'; line: 'model' | 'mine'; step: number; back: ResultPhase }
+  | { kind: 'result'; result: Result; review: Review }
   | { kind: 'error'; message: string };
-type ResultPhase = Extract<Phase, { kind: 'success' | 'failure' }>;
 
 const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
   'no-mate': '詰みを逃しました',
@@ -31,7 +40,7 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
 };
 
 /** 玉方の応手を見せるまでの最小待ち時間（攻方の手のアニメーションが終わるのを待つ） */
-const MIN_REPLY_DELAY_MS = 550;
+const MIN_REPLY_DELAY_MS = 320;
 
 const STATUS_LABEL = { untried: '初挑戦', unsolved: '未正解', solved: '正解済み' } as const;
 const SYNC_LABEL = { synced: '履歴は同期済み', pending: '履歴を同期中', offline: '履歴はこの端末に保存中（未同期）' } as const;
@@ -65,7 +74,6 @@ export class App {
   ) {
     this.root.innerHTML = `
       <header class="app-header">
-        <h1 class="title">実戦詰将棋</h1>
         <div class="problem-info" aria-live="polite"></div>
         <span class="sync" role="status"></span>
         <button type="button" class="icon-btn" data-action="settings" aria-label="出題設定">⚙</button>
@@ -79,12 +87,19 @@ export class App {
     this.board = new BoardView({
       onSquare: (i) => this.onSquare(i),
       onHand: (c, t) => this.onHand(c, t),
+      onReplay: (dir) => this.stepReview(dir),
     });
     this.root.querySelector('.app-main')!.appendChild(this.board.el);
     this.panel.addEventListener('click', (e) => this.onAction(e));
     this.overlay.addEventListener('click', (e) => this.onAction(e));
     this.root.querySelector('.app-header')!.addEventListener('click', (e) => this.onAction(e));
     this.history.onChange = () => this.renderHeader();
+    // PC では左右キーでも振り返りを操作できる
+    window.addEventListener('keydown', (e) => {
+      if (this.overlay.hidden === false) return;
+      if (e.key === 'ArrowRight') this.stepReview(1);
+      else if (e.key === 'ArrowLeft') this.stepReview(-1);
+    });
   }
 
   async start(): Promise<void> {
@@ -152,13 +167,17 @@ export class App {
     this.selection = null;
     this.phase = { kind: 'playing', thinking: true };
     const started = performance.now();
+    // 応手（または不正解）を見せるまでの時間を、玉方の探索時間にそろえる。
+    // 詰みがあるとエンジンはすぐ返すので、そろえないと待ち時間で正誤が分かってしまう
+    const delay = Math.max(MIN_REPLY_DELAY_MS, session.nextMovetimeMs);
     // playAttacker は最初の await より前に攻方の手を局面に反映するので、すぐ描画できる
     const statePromise = session.playAttacker(move);
     this.render();
     try {
       const state = await statePromise;
-      const wait = MIN_REPLY_DELAY_MS - (performance.now() - started);
-      if (wait > 0 && state.kind === 'attacker-turn') await new Promise((r) => setTimeout(r, wait));
+      const wait = delay - (performance.now() - started);
+      if (wait > 0 && state.kind !== 'success') await new Promise((r) => setTimeout(r, wait));
+      if (this.session !== session) return;
       this.afterState(state);
     } catch (e) {
       this.fail(e);
@@ -173,7 +192,7 @@ export class App {
         break;
       case 'success': {
         this.lastAttempt = session.moves.slice();
-        this.phase = { kind: 'success', moves: state.moves };
+        this.phase = { kind: 'result', result: state, review: { line: 'mine', step: this.lastAttempt.length } };
         const outcome: Outcome = this.viewedAnswer
           ? 'clear-after-viewing'
           : state.moves <= session.problem.length ? 'shortest' : 'clear';
@@ -182,7 +201,11 @@ export class App {
       }
       case 'failure':
         this.lastAttempt = session.moves.slice();
-        this.phase = { kind: 'failure', reason: state.reason };
+        this.phase = {
+          kind: 'result',
+          result: { kind: 'failure', reason: state.reason, missedAt: state.missedAt },
+          review: { line: 'mine', step: this.lastAttempt.length },
+        };
         this.history.record(session.problem.id, 'fail');
         break;
       case 'thinking':
@@ -287,36 +310,17 @@ export class App {
           this.history.record(this.session.problem.id, 'giveup');
         }
         this.viewedAnswer = true;
-        this.phase = { kind: 'answer', line: 'model', step: 0, back: { kind: 'failure', reason: 'giveup' } };
-        break;
-      case 'answer':
-        if (phase.kind === 'success' || phase.kind === 'failure') {
-          this.viewedAnswer = true;
-          this.phase = { kind: 'answer', line: 'model', step: 0, back: phase };
-        }
-        break;
-      case 'answer-close':
-        if (phase.kind === 'answer') this.phase = phase.back;
+        this.phase = { kind: 'result', result: { kind: 'failure', reason: 'giveup' }, review: { line: 'model', step: 0 } };
         break;
       case 'line-model':
-      case 'line-mine':
-        if (phase.kind === 'answer') this.phase = { ...phase, line: action === 'line-model' ? 'model' : 'mine', step: 0 };
-        break;
-      case 'step-prev':
-      case 'step-next':
-      case 'step-first':
-      case 'step-last':
-      case 'step-to':
-        if (phase.kind === 'answer') {
-          const max = this.answerLine(phase.line).length;
-          const step =
-            action === 'step-prev' ? phase.step - 1
-            : action === 'step-next' ? phase.step + 1
-            : action === 'step-first' ? 0
-            : action === 'step-last' ? max
-            : Number(btn.dataset.step);
-          this.phase = { ...phase, step: Math.max(0, Math.min(max, step)) };
+        if (phase.kind === 'result') {
+          // 解答を見たので、この問題の以後のクリアは「解答閲覧後」として記録する
+          this.viewedAnswer = true;
+          this.phase = { ...phase, review: { line: 'model', step: 0 } };
         }
+        break;
+      case 'line-mine':
+        if (phase.kind === 'result') this.phase = { ...phase, review: { line: 'mine', step: this.lastAttempt.length } };
         break;
       case 'promote-yes':
       case 'promote-no':
@@ -340,6 +344,17 @@ export class App {
         this.saveSettingsForm();
         return;
     }
+    this.render();
+  }
+
+  /** 振り返りで1手戻る（-1）・進む（+1） */
+  private stepReview(dir: -1 | 1): void {
+    const phase = this.phase;
+    if (phase.kind !== 'result') return;
+    const max = this.answerLine(phase.review.line).length;
+    const step = Math.max(0, Math.min(max, phase.review.step + dir));
+    if (step === phase.review.step) return;
+    this.phase = { ...phase, review: { ...phase.review, step } };
     this.render();
   }
 
@@ -367,9 +382,9 @@ export class App {
     const side = p.attacker === 'b' ? '先手' : '後手';
     // 履歴から毎回求めるので、解いた直後や他の端末との同期の後にも印が変わる
     const tag = problemStatus(this.history.records[p.id]);
-    this.header.innerHTML = `<span class="pid">問題 ${vol}-${line}</span>
-      <span class="badge">${revealed ? `${p.length}手詰` : '？手詰'}</span>
-      <span class="side">攻方：${side}</span>
+    this.header.innerHTML = `<span class="badge">${revealed ? `${p.length}手詰` : '？手詰'}</span>
+      <span class="pid">問題 ${vol}-${line}</span>
+      <span class="side">攻方 ${side}</span>
       <span class="tag status-${tag}">${STATUS_LABEL[tag]}</span>`;
     const sync = this.root.querySelector<HTMLElement>('.sync')!;
     sync.dataset.state = this.history.syncState;
@@ -383,10 +398,11 @@ export class App {
     let position: Position;
     let lastMove: string | null = null;
     const phase = this.phase;
-    if (phase.kind === 'answer') {
-      const line = this.answerLine(phase.line);
-      position = applyMoves(parseSfen(p.sfen), line.slice(0, phase.step));
-      if (phase.step > 0) lastMove = line[phase.step - 1];
+    if (phase.kind === 'result') {
+      const { line: which, step } = phase.review;
+      const line = this.answerLine(which);
+      position = applyMoves(parseSfen(p.sfen), line.slice(0, step));
+      if (step > 0) lastMove = line[step - 1];
     } else if (this.session) {
       position = this.session.position;
       lastMove = this.session.moves.at(-1) ?? null;
@@ -401,9 +417,14 @@ export class App {
       targets: this.targetsFor(this.selection),
       lastMove,
       interactive,
+      replay: phase.kind === 'result' && !this.settingsOpen,
     });
   }
 
+  /**
+   * 下のパネル。高さは固定で、ボタンはどの状態でも一番下の同じ位置に置く
+   * （左：やり直す・再挑戦、右：解答を見る・次の問題）。
+   */
   private renderPanel(): void {
     const phase = this.phase;
     const p = this.problem;
@@ -427,59 +448,41 @@ export class App {
           <p class="notice">${phase.notice ?? (this.session?.moves.length ? '' : (this.problemNotice ?? ''))}</p>
           <div class="actions">
             ${btn('retry', 'やり直す', 'secondary', phase.thinking || !moved)}
-            ${btn('giveup', '解答を見る', 'ghost', phase.thinking)}
+            ${btn('giveup', '解答を見る', 'secondary', phase.thinking)}
           </div>`;
         break;
       }
-      case 'success': {
-        const shortest = p ? phase.moves <= p.length : true;
-        const after = this.viewedAnswer ? '<span class="tag">解答閲覧後</span>' : '';
-        html = `<p class="result success">✓ ${phase.moves}手で詰ませました！${after}</p>
-          <p class="sub">${shortest ? '最短手数での正解です。' : `この問題は最短${p?.length}手で詰みます。`}</p>
-          <div class="actions">${btn('next', '次の問題 →', 'primary')}</div>
+      case 'result': {
+        const { result, review } = phase;
+        const success = result.kind === 'success';
+        let head: string;
+        if (result.kind === 'success') {
+          const shortest = p ? result.moves <= p.length : true;
+          const tag = this.viewedAnswer ? '解答閲覧後' : shortest ? '最短' : `最短は${p?.length}手`;
+          head = `<p class="result success">✓ ${result.moves}手で詰みました<span class="tag">${tag}</span></p>`;
+        } else {
+          const at = result.missedAt ? `<span class="tag">${result.missedAt}手目</span>` : '';
+          head = `<p class="result failure">✗ ${FAILURE_TEXT[result.reason]}${at}</p>`;
+        }
+        const line = this.answerLine(review.line);
+        const missedHere =
+          review.line === 'mine' && result.kind === 'failure' && result.missedAt !== undefined && review.step === result.missedAt;
+        const hint = missedHere
+          ? '<p class="notice missed">▲ この手で詰みを逃しました</p>'
+          : '<p class="notice">盤の左側をタップで戻る・右側で進む</p>';
+        html = `${head}
+          <div class="review-bar">
+            <div class="segmented" role="tablist">
+              <button type="button" role="tab" class="${review.line === 'mine' ? 'on' : ''}" data-action="line-mine"${this.lastAttempt.length ? '' : ' disabled'}>あなたの手順</button>
+              <button type="button" role="tab" class="${review.line === 'model' ? 'on' : ''}" data-action="line-model">解答（${p?.length}手）</button>
+            </div>
+            <span class="step">${review.step}/${line.length}手</span>
+          </div>
+          ${hint}
           <div class="actions">
-            ${btn('answer', shortest ? '解答を見る' : `${p?.length}手の解答を見る`)}
-            ${btn('retry', 'もう一度')}
+            ${btn('retry', '再挑戦', success ? 'secondary' : 'primary')}
+            ${btn('next', '次の問題 →', success ? 'primary' : 'secondary')}
           </div>`;
-        break;
-      }
-      case 'failure': {
-        const played = this.lastAttempt.length;
-        html = `<p class="result failure">✗ ${FAILURE_TEXT[phase.reason]}</p>
-          <p class="sub">最短${p?.length}手で詰みます。${played ? `あなたは${played}手指しました。` : ''}もう一度挑戦できます。</p>
-          <div class="actions">${btn('retry', '再挑戦', 'primary')}</div>
-          <div class="actions">${btn('answer', '解答を見る')}${btn('next', '次の問題')}</div>`;
-        break;
-      }
-      case 'answer': {
-        const line = this.answerLine(phase.line);
-        const label = phase.line === 'model' ? `最短${p?.length}手の解答例` : 'あなたの手順';
-        const start = p ? parseSfen(p.sfen) : null;
-        const items = start
-          ? line
-              .map((m, i) => {
-                const before = applyMoves(start, line.slice(0, i));
-                const prevTo = i > 0 ? parseUsiMove(line[i - 1]).to : undefined;
-                const cur = i + 1 === phase.step ? ' current' : '';
-                return `<button type="button" class="move${cur}" data-action="step-to" data-step="${i + 1}">${i + 1}. ${moveToJapanese(before, m, prevTo)}</button>`;
-              })
-              .join('')
-          : '';
-        html = `<div class="answer-head">
-            <strong>${label}</strong><span class="step">${phase.step}/${line.length}手</span>
-          </div>
-          <div class="segmented" role="tablist">
-            <button type="button" role="tab" class="${phase.line === 'model' ? 'on' : ''}" data-action="line-model">最短解</button>
-            <button type="button" role="tab" class="${phase.line === 'mine' ? 'on' : ''}" data-action="line-mine"${this.lastAttempt.length ? '' : ' disabled'}>自分の手順</button>
-          </div>
-          <div class="moves">${items}</div>
-          <div class="actions stepper">
-            ${btn('step-first', '⏮', 'secondary', phase.step === 0)}
-            ${btn('step-prev', '◀ 前の手', 'secondary', phase.step === 0)}
-            ${btn('step-next', '次の手 ▶', 'secondary', phase.step === line.length)}
-            ${btn('step-last', '⏭', 'secondary', phase.step === line.length)}
-          </div>
-          <div class="actions">${btn('answer-close', '解答再生を閉じる', 'primary')}</div>`;
         break;
       }
     }

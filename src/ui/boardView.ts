@@ -17,15 +17,16 @@ export interface BoardViewModel {
   lastMove: string | null;
   /** 入力を受け付けるか */
   interactive: boolean;
+  /** 振り返り中か（盤の左側のタップで戻る、右側で進む） */
+  replay: boolean;
 }
 
 export interface BoardViewHandlers {
   onSquare(index: number): void;
   onHand(color: Color, type: HandType): void;
+  /** 振り返りで盤をタップした（-1: 左側＝戻る、+1: 右側＝進む） */
+  onReplay(dir: -1 | 1): void;
 }
-
-const ZEN = ['', '１', '２', '３', '４', '５', '６', '７', '８', '９'];
-const KAN = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
 /** 駒の要素。upright = 手前向き（攻方の駒・攻方の駒台） */
 function pieceHtml(p: Piece, upright: boolean, attrs = ''): string {
@@ -50,8 +51,6 @@ export class BoardView {
   private readonly bottomHand: HTMLElement;
   private readonly grid: HTMLElement;
   private readonly pieces: HTMLElement;
-  private readonly fileLabels: HTMLElement;
-  private readonly rankLabels: HTMLElement;
   private model: BoardViewModel | null = null;
   /** 今置いている駒の局面と向き（同じなら駒を置き直さない） */
   private key = '';
@@ -64,19 +63,13 @@ export class BoardView {
     this.el.innerHTML = `
       <div class="hand hand-top" aria-label="玉方の持ち駒"></div>
       <div class="board-frame">
-        <div class="file-labels" aria-hidden="true"></div>
-        <div class="board-with-ranks">
-          <div class="board" role="grid" aria-label="将棋盤"><div class="pieces" aria-hidden="true"></div></div>
-          <div class="rank-labels" aria-hidden="true"></div>
-        </div>
+        <div class="board" role="grid" aria-label="将棋盤"><div class="pieces" aria-hidden="true"></div></div>
       </div>
       <div class="hand hand-bottom" aria-label="攻方の持ち駒"></div>`;
     this.topHand = this.el.querySelector('.hand-top')!;
     this.bottomHand = this.el.querySelector('.hand-bottom')!;
     this.grid = this.el.querySelector('.board')!;
     this.pieces = this.el.querySelector('.pieces')!;
-    this.fileLabels = this.el.querySelector('.file-labels')!;
-    this.rankLabels = this.el.querySelector('.rank-labels')!;
 
     for (let d = 0; d < 81; d++) {
       const cell = document.createElement('button');
@@ -86,6 +79,12 @@ export class BoardView {
       this.grid.insertBefore(cell, this.pieces);
     }
     this.grid.addEventListener('click', (e) => {
+      if (this.model?.replay) {
+        // 盤を反転していても、画面上の左右で決める
+        const r = this.grid.getBoundingClientRect();
+        this.handlers.onReplay(e.clientX < r.left + r.width / 2 ? -1 : 1);
+        return;
+      }
       const cell = (e.target as HTMLElement).closest<HTMLElement>('.cell');
       if (!cell || !this.model?.interactive) return;
       this.handlers.onSquare(this.toIndex(Number(cell.dataset.display)));
@@ -134,21 +133,12 @@ export class BoardView {
       const dropFrom = step?.move.kind === 'drop' ? this.handPiece(step.mover, step.move.type)?.getBoundingClientRect() : undefined;
       const handBefore = step ? prev!.position.hands[step.mover] : null;
       this.generation++;
-      if (!prev || prev.bottom !== model.bottom) this.renderLabels();
       this.renderPieces(model.position, model.bottom);
       this.renderHand(this.bottomHand, model.position, model.bottom, '攻方', true);
       this.renderHand(this.topHand, model.position, opposite(model.bottom), '玉方', false);
       if (step) void this.animate(step, dropFrom, handBefore!);
     }
     this.renderMarks(model);
-  }
-
-  private renderLabels(): void {
-    // 筋・段の目盛り（反転時は逆順）
-    const files = this.flipped ? [1, 2, 3, 4, 5, 6, 7, 8, 9] : [9, 8, 7, 6, 5, 4, 3, 2, 1];
-    const ranks = this.flipped ? [8, 7, 6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6, 7, 8];
-    this.fileLabels.innerHTML = files.map((f) => `<span>${ZEN[f]}</span>`).join('');
-    this.rankLabels.innerHTML = ranks.map((r) => `<span>${KAN[r]}</span>`).join('');
   }
 
   private renderPieces(position: Position, bottom: Color): void {
@@ -179,8 +169,9 @@ export class BoardView {
 
   /** 選択・移動先・直前の手の印。駒は置き直さずに付け替えるだけ */
   private renderMarks(model: BoardViewModel): void {
-    const { selection, targets, lastMove, interactive } = model;
+    const { selection, targets, lastMove, interactive, replay } = model;
     this.el.classList.toggle('interactive', interactive);
+    this.el.classList.toggle('replay', replay);
     const lastTo = lastMove ? parseUsiMove(lastMove).to : -1;
     const selectedIndex = selection?.kind === 'board' ? selection.index : -1;
     for (let index = 0; index < 81; index++) {
@@ -200,8 +191,8 @@ export class BoardView {
   // ---- アニメーション ----
 
   /**
-   * 1手のアニメーション。駒を移動元から持ち上げて運び、置いた瞬間に軽く沈ませる。
-   * 取った駒は指した側の駒台へ運び、成る手は置いた後に駒を裏返す。
+   * 1手のアニメーション。駒を持ち上げて素早く運び、最後に加速して盤に打ちつける（ペチン）。
+   * 成る手は運んでいる途中で裏返し、成駒の面で着地する。取った駒は指した側の駒台へ運ぶ。
    */
   private async animate(step: Step, dropFrom: DOMRect | undefined, handBefore: Position['hands']['b']): Promise<void> {
     const gen = this.generation;
@@ -215,12 +206,8 @@ export class BoardView {
     const b = center(toRect);
     const dx = a.x - b.x;
     const dy = a.y - b.y;
-    const slideMs = Math.min(300, 170 + Math.hypot(dx, dy) * 0.35);
-    const flightMs = 260;
-
-    // 成る手は、運んでいる間は成る前の駒を見せる
-    const promoting = move.kind === 'move' && move.promote;
-    if (promoting) setFace(el, piece);
+    const slideMs = Math.round(Math.min(170, 100 + Math.hypot(dx, dy) * 0.18));
+    const flightMs = 170;
 
     // 取られる駒は、動かす駒の下に一旦残しておく
     let victim: HTMLElement | null = null;
@@ -238,50 +225,76 @@ export class BoardView {
     }
 
     el.classList.add('moving');
-    await settle(
-      el.animate(
-        [
-          { transform: `translate(${dx}px, ${dy}px) scale(1.12)`, easing: 'cubic-bezier(.25,.8,.35,1)' },
-          { transform: 'translate(0, 0) scale(1.12)', offset: 0.78, easing: 'cubic-bezier(.5,0,.75,0)' },
-          { transform: 'translate(0, 0) scale(1)' },
-        ],
-        { duration: slideMs },
+    const promoting = move.kind === 'move' && move.promote;
+    const flip = promoting ? this.flipInFlight(el, piece, slideMs) : Promise.resolve();
+    await Promise.all([
+      settle(
+        el.animate(
+          [
+            // 持ち上げた状態で素早く運び（減速しながら目的のマスの上へ）…
+            { transform: `translate(${dx}px, ${dy}px) scale(1.14)`, easing: 'cubic-bezier(.2,.7,.4,1)' },
+            { transform: 'translate(0, 0) scale(1.14)', offset: 0.72, easing: 'cubic-bezier(.6,0,1,1)' },
+            // …最後は加速して盤に落とす
+            { transform: 'translate(0, 0) scale(1)' },
+          ],
+          { duration: slideMs },
+        ),
       ),
-    );
+      flip,
+    ]);
     el.classList.remove('moving');
     if (gen !== this.generation) return;
 
     // 着手：盤に駒を打ちつけた手応え
     this.impact(el);
-    navigator.vibrate?.(12);
+    navigator.vibrate?.(15);
 
-    const tasks: Promise<void>[] = [];
-    if (promoting) tasks.push(this.flipPromote(el, { ...piece, promoted: true }));
-    if (victim) tasks.push(this.carryToHand(victim, captured!, handTarget, flightMs));
-    await Promise.all(tasks);
+    if (victim) await this.carryToHand(victim, captured!, handTarget, flightMs);
   }
 
-  /** 着手した位置に波紋を出す */
+  /** 着地の瞬間。駒を一瞬つぶし、盤をわずかに沈ませ、波紋を出す */
   private impact(el: HTMLElement): void {
+    el.querySelector<HTMLElement>('.pc-face')!.animate(
+      [{ transform: 'scale(1.06, 0.9)' }, { transform: 'scale(0.98, 1.02)', offset: 0.55 }, { transform: 'scale(1)' }],
+      { duration: 110, easing: 'ease-out' },
+    );
+    this.grid.animate([{ transform: 'translateY(1.5px)' }, { transform: 'translateY(0)' }], { duration: 90, easing: 'ease-out' });
     const ring = fragment(`<div class="impact" style="${el.getAttribute('style')}"></div>`);
     this.pieces.appendChild(ring);
     void settle(
       ring.animate(
         [
-          { transform: 'scale(0.6)', opacity: 0.55 },
-          { transform: 'scale(1.35)', opacity: 0 },
+          { transform: 'scale(0.75)', opacity: 0.8 },
+          { transform: 'scale(1.3)', opacity: 0 },
         ],
-        { duration: 260, easing: 'ease-out' },
+        { duration: 180, easing: 'cubic-bezier(.2,.8,.4,1)' },
       ),
     ).then(() => ring.remove());
   }
 
-  /** 駒を裏返して成駒にする */
-  private async flipPromote(el: HTMLElement, promoted: Piece): Promise<void> {
+  /**
+   * 運んでいる間に駒を裏返して成駒にする。奥行きを付けて縦軸で回し、
+   * 真横を向いた瞬間に面を差し替える（駒の表と裏が入れ替わって見える）。
+   */
+  private async flipInFlight(el: HTMLElement, plain: Piece, ms: number): Promise<void> {
     const face = el.querySelector<HTMLElement>('.pc-face')!;
-    await settle(face.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: 90, easing: 'ease-in' }));
-    setFace(el, promoted);
-    await settle(face.animate([{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], { duration: 120, easing: 'ease-out' }));
+    setFace(el, plain);
+    const half = Math.max(50, Math.round(ms * 0.36));
+    await settle(
+      face.animate([{ transform: 'perspective(160px) rotateY(0deg)' }, { transform: 'perspective(160px) rotateY(90deg)' }], {
+        duration: half,
+        delay: Math.max(0, ms * 0.12),
+        easing: 'ease-in',
+        fill: 'backwards',
+      }),
+    );
+    setFace(el, { ...plain, promoted: true });
+    await settle(
+      face.animate([{ transform: 'perspective(160px) rotateY(-90deg)' }, { transform: 'perspective(160px) rotateY(0deg)' }], {
+        duration: half,
+        easing: 'ease-out',
+      }),
+    );
   }
 
   /** 取った駒を、向きを変えながら駒台へ運ぶ */
@@ -298,16 +311,16 @@ export class BoardView {
         victim.animate(
           [
             { transform: 'translate(0, 0) scale(1)' },
-            { transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(1.15)` },
+            { transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(1.12)` },
             { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: target ? 1 : 0 },
           ],
-          { duration: ms, easing: 'cubic-bezier(.45,0,.25,1)', fill: 'forwards' },
+          { duration: ms, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' },
         ),
       ),
       settle(face.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(180deg)' }], { duration: ms, easing: 'ease-in-out', fill: 'forwards' })),
     ]);
     victim.remove();
-    target?.animate([{ transform: 'scale(1.18)' }, { transform: 'scale(1)' }], { duration: 160, easing: 'ease-out' });
+    target?.animate([{ transform: 'scale(1.2)' }, { transform: 'scale(1)' }], { duration: 120, easing: 'ease-out' });
   }
 }
 
