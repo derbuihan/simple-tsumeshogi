@@ -209,8 +209,9 @@ export class BoardView {
     const b = center(toRect);
     const dx = a.x - b.x;
     const dy = a.y - b.y;
-    const slideMs = Math.round(Math.min(170, 100 + Math.hypot(dx, dy) * 0.18));
-    const flightMs = 170;
+    // 減速しながら滑り込むと柔らかく見えるので、ほぼ一瞬で運び、勢いのまま止める
+    const slideMs = Math.round(Math.min(100, 60 + Math.hypot(dx, dy) * 0.1));
+    const flightMs = 110;
 
     // 取られる駒は、動かす駒の下に一旦残しておく
     let victim: HTMLElement | null = null;
@@ -234,10 +235,10 @@ export class BoardView {
       settle(
         el.animate(
           [
-            // 持ち上げた状態で素早く運び（減速しながら目的のマスの上へ）…
-            { transform: `translate(${dx}px, ${dy}px) scale(1.14)`, easing: 'cubic-bezier(.2,.7,.4,1)' },
-            { transform: 'translate(0, 0) scale(1.14)', offset: 0.72, easing: 'cubic-bezier(.6,0,1,1)' },
-            // …最後は加速して盤に落とす
+            // わずかに持ち上げて、減速せずに目的のマスまで運び…
+            { transform: `translate(${dx}px, ${dy}px) scale(1.04)`, easing: 'cubic-bezier(.4,0,.8,.7)' },
+            { transform: 'translate(0, 0) scale(1.04)', offset: 0.85, easing: 'linear' },
+            // …その場で盤に落として止める
             { transform: 'translate(0, 0) scale(1)' },
           ],
           { duration: slideMs },
@@ -248,29 +249,32 @@ export class BoardView {
     el.classList.remove('moving');
     if (gen !== this.generation) return;
 
-    // 着手：盤に駒を打ちつけた手応え
+    // 着手：盤に駒を打ちつけた手応え。振動は自分（攻方）が指した手だけ（玉方の応手・振り返りでは鳴らさない）
     this.impact(el);
-    navigator.vibrate?.(15);
+    if (mover === this.model!.bottom && !this.model!.replay) tapHaptic();
 
     if (victim) await this.carryToHand(victim, captured!, handTarget, flightMs);
   }
 
-  /** 着地の瞬間。駒を一瞬つぶし、盤をわずかに沈ませ、波紋を出す */
+  /**
+   * 着地の瞬間。駒を一瞬だけ押しつぶして戻し（揺れ戻しは付けない）、盤を1px沈ませ、
+   * マスの枠を一瞬光らせる。どれも短く、すぐに止める
+   */
   private impact(el: HTMLElement): void {
-    el.querySelector<HTMLElement>('.pc-face')!.animate(
-      [{ transform: 'scale(1.06, 0.9)' }, { transform: 'scale(0.98, 1.02)', offset: 0.55 }, { transform: 'scale(1)' }],
-      { duration: 110, easing: 'ease-out' },
-    );
-    this.grid.animate([{ transform: 'translateY(1.5px)' }, { transform: 'translateY(0)' }], { duration: 90, easing: 'ease-out' });
+    el.querySelector<HTMLElement>('.pc-face')!.animate([{ transform: 'scale(1.04, 0.93)' }, { transform: 'scale(1)' }], {
+      duration: 50,
+      easing: 'cubic-bezier(.2,0,.2,1)',
+    });
+    this.grid.animate([{ transform: 'translateY(1px)' }, { transform: 'translateY(0)' }], { duration: 50, easing: 'linear' });
     const ring = fragment(`<div class="impact" style="${el.getAttribute('style')}"></div>`);
     this.pieces.appendChild(ring);
     void settle(
       ring.animate(
         [
-          { transform: 'scale(0.75)', opacity: 0.8 },
-          { transform: 'scale(1.3)', opacity: 0 },
+          { transform: 'scale(1)', opacity: 1 },
+          { transform: 'scale(1.12)', opacity: 0 },
         ],
-        { duration: 180, easing: 'cubic-bezier(.2,.8,.4,1)' },
+        { duration: 130, easing: 'cubic-bezier(.2,.8,.4,1)' },
       ),
     ).then(() => ring.remove());
   }
@@ -282,20 +286,19 @@ export class BoardView {
   private async flipInFlight(el: HTMLElement, plain: Piece, ms: number): Promise<void> {
     const face = el.querySelector<HTMLElement>('.pc-face')!;
     setFace(el, plain);
-    const half = Math.max(50, Math.round(ms * 0.36));
+    // 運ぶ時間の中で裏返し終える（着地を待たせない）
+    const half = Math.max(35, Math.round(ms * 0.42));
     await settle(
       face.animate([{ transform: 'perspective(160px) rotateY(0deg)' }, { transform: 'perspective(160px) rotateY(90deg)' }], {
         duration: half,
-        delay: Math.max(0, ms * 0.12),
         easing: 'ease-in',
-        fill: 'backwards',
       }),
     );
     setFace(el, { ...plain, promoted: true });
     await settle(
       face.animate([{ transform: 'perspective(160px) rotateY(-90deg)' }, { transform: 'perspective(160px) rotateY(0deg)' }], {
         duration: half,
-        easing: 'ease-out',
+        easing: 'ease-in',
       }),
     );
   }
@@ -314,16 +317,16 @@ export class BoardView {
         victim.animate(
           [
             { transform: 'translate(0, 0) scale(1)' },
-            { transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(1.12)` },
+            { transform: `translate(${dx * 0.5}px, ${dy * 0.5}px) scale(1.06)` },
             { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: target ? 1 : 0 },
           ],
-          { duration: ms, easing: 'cubic-bezier(.4,0,.2,1)', fill: 'forwards' },
+          { duration: ms, easing: 'cubic-bezier(.5,0,.6,1)', fill: 'forwards' },
         ),
       ),
       settle(face.animate([{ transform: 'rotate(0)' }, { transform: 'rotate(180deg)' }], { duration: ms, easing: 'ease-in-out', fill: 'forwards' })),
     ]);
     victim.remove();
-    target?.animate([{ transform: 'scale(1.2)' }, { transform: 'scale(1)' }], { duration: 120, easing: 'ease-out' });
+    target?.animate([{ transform: 'scale(1.1)' }, { transform: 'scale(1)' }], { duration: 70, easing: 'linear' });
   }
 }
 
@@ -337,6 +340,26 @@ function fragment(html: string): HTMLElement {
 function setFace(el: HTMLElement, p: Piece): void {
   el.querySelector('.pc-char')!.textContent = pieceChar(p);
   el.classList.toggle('promoted', p.promoted);
+}
+
+type HapticNavigator = Navigator & { playHaptics?: (effect: string, intensity?: number) => unknown };
+
+/**
+ * 駒を置いた手応えの、ごく軽い振動。
+ * Web Haptics API（navigator.playHaptics、Chromium で実験中）が使えればそれで軽く鳴らす（強さを指定でき、OS のタップ時のバイブと同じ鳴り方になる）。
+ * 使えなければ navigator.vibrate で短く鳴らす（強さは指定できないので、短くして軽く感じさせる）。
+ */
+function tapHaptic(): void {
+  const nav = navigator as HapticNavigator;
+  if (typeof nav.playHaptics === 'function') {
+    try {
+      void Promise.resolve(nav.playHaptics('align', 0.5)).catch(() => undefined);
+      return;
+    } catch {
+      /* 使えなければ vibrate にする */
+    }
+  }
+  navigator.vibrate?.(6);
 }
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
