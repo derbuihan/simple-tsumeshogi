@@ -103,3 +103,6 @@ npm run filter:minimal-hand -- --engine "$PWD/.cache/research/YaneuraOu/source/Y
 - 少量での試行には `--limit-files 1 --limit-records 10` を使う。試行時は完了状態を保存しない。
 
 全件の出力を本番データへ反映する前に、No・未解決・処理エラーの件数を集計し、未解決が残った場合は時間上限を増やして再処理する。既定では未解決棋譜は出力されない。
+
+本番へ反映するときは、出力から索引を作り直し（`npm run build:index`）、同じ出力を R2 に上げる（`npm run upload:problems`、既定の入力が `.cache/minimal-hand/public/data`）。
+問題を除くと行番号（問題 ID の一部）がずれるので、解答履歴（KV）もリセットする。
