@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 将棋の駒の形 -->
+  <path d="M32 3 L50 11 L58 61 L6 61 L14 11 Z" fill="#e8c27a" stroke="#6b4a1f" stroke-width="3" stroke-linejoin="round"/>
+  <text x="32" y="48" text-anchor="middle" font-size="30" font-weight="bold" font-family="'Hiragino Mincho ProN','Yu Mincho','Noto Serif JP',serif" fill="#3a2a10">詰</text>
+</svg>

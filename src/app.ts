@@ -45,7 +45,6 @@ export class App {
   /** この問題で解答を見たか（以後のクリアは「解答閲覧後のクリア」として記録する） */
   private viewedAnswer = false;
   /** 出題時点での履歴上の状態 */
-  private problemTag: keyof typeof STATUS_LABEL = 'untried';
   /** 出題方法についてのお知らせ（希望の順序で選べなかったときなど） */
   private problemNotice: string | undefined;
   private settingsOpen = false;
@@ -119,7 +118,6 @@ export class App {
     });
     saveCursor(result.cursor);
     this.problem = await loadProblem(result.id);
-    this.problemTag = problemStatus(this.history.records[result.id]);
     this.problemNotice = result.fallback;
     this.viewedAnswer = false;
     this.lastAttempt = [];
@@ -367,10 +365,12 @@ export class App {
     const [, vol, line] = p.id.split('/');
     const revealed = this.settings.showLength || !['loading', 'playing'].includes(this.phase.kind);
     const side = p.attacker === 'b' ? '先手' : '後手';
+    // 履歴から毎回求めるので、解いた直後や他の端末との同期の後にも印が変わる
+    const tag = problemStatus(this.history.records[p.id]);
     this.header.innerHTML = `<span class="pid">問題 ${vol}-${line}</span>
       <span class="badge">${revealed ? `${p.length}手詰` : '？手詰'}</span>
       <span class="side">攻方：${side}</span>
-      <span class="tag status-${this.problemTag}">${STATUS_LABEL[this.problemTag]}</span>`;
+      <span class="tag status-${tag}">${STATUS_LABEL[tag]}</span>`;
     const sync = this.root.querySelector<HTMLElement>('.sync')!;
     sync.dataset.state = this.history.syncState;
     sync.title = SYNC_LABEL[this.history.syncState];

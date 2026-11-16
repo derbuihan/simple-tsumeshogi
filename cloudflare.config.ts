@@ -5,6 +5,8 @@ export default defineConfig({
     name: 'tsumeshogi',
     compatibilityDate: '2026-11-01',
     entrypoint: './worker/index.ts',
+    // バージョンごとのプレビュー用 URL は使わない
+    previewUrls: false,
     assets: {
       // API と問題データ（と開発時の投入口）だけ Worker で処理し、それ以外は静的アセットとして返す
       runWorkerFirst: ['/api/*', '/problems/*', '/__dev/*'],

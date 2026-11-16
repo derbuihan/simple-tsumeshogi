@@ -24,10 +24,10 @@
 
 ## 小さな改善
 
-- [ ] ヘッダーの「初挑戦／未正解／正解済み」の印を、解いた直後に更新する（今は出題した時点の状態のまま）
+- [x] ヘッダーの「初挑戦／未正解／正解済み」の印を、解いた直後に更新する（描画のたびに履歴から求める）
 - [ ] 出題設定を端末間で同期する（今は端末ごとの localStorage に保存）
-- [ ] プレビュー用 URL を止める（`cloudflare.config.ts` に `previewUrls: false`）
-- [ ] `favicon.ico` を用意する（今は 404）
+- [x] プレビュー用 URL を止める（`cloudflare.config.ts` に `previewUrls: false`）
+- [x] `favicon.ico` を用意する（`public/favicon.ico` と `public/favicon.svg`）
 
 ## 開発環境
 
