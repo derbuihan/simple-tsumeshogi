@@ -114,6 +114,21 @@ export class App {
     });
     this.root.querySelector('.app-header')!.addEventListener('click', (e) => this.onAction(e));
     this.history.onChange = () => this.renderHeader();
+    // 盤に使える高さ＝画面の高さからヘッダーとパネルを除いた分。文字の大きさや画面の向きが変われば測り直す
+    const header = this.root.querySelector<HTMLElement>('.app-header')!;
+    const fitBoard = () => {
+      const cs = getComputedStyle(this.root);
+      const h =
+        this.root.clientHeight -
+        parseFloat(cs.paddingTop) -
+        parseFloat(cs.paddingBottom) -
+        parseFloat(cs.rowGap) * 2 -
+        header.offsetHeight -
+        this.panel.offsetHeight;
+      this.root.style.setProperty('--board-h', `${Math.max(0, h)}px`);
+    };
+    const observer = new ResizeObserver(fitBoard);
+    for (const el of [this.root, header, this.panel]) observer.observe(el);
     // PC では左右キーでも振り返りを操作できる
     window.addEventListener('keydown', (e) => {
       const phase = this.phase;

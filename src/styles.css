@@ -30,8 +30,9 @@
 }
 
 /*
-  画面はスクロールさせない。見えている高さ（dvh：ブラウザの URL バーや Android の3ボタンのナビゲーションバーを除いた高さ）
-  にちょうど収め、ジェスチャーナビゲーション・全画面では safe-area の分だけ上下を空ける。
+  画面はスクロールさせない。見えている高さ（dvh：ブラウザの URL バーや Android のナビゲーションバーを除いた高さ）に収める。
+  viewport-fit=cover は付けない（付けると Android の Chrome がナビゲーションバーの裏まで描き、
+  インストールしたアプリでは safe-area が取れずにボタンが隠れた）。
 */
 html,
 body {
@@ -54,19 +55,22 @@ body {
   padding: max(4px, env(safe-area-inset-top)) max(2px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom))
     max(2px, env(safe-area-inset-left));
   display: grid;
-  /* 盤は残りの高さに合わせて縮む。パネルは切らない */
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /*
+    ヘッダー・盤・パネルを隙間なく積み、まとめて縦の真ん中に置く（余った高さは上下の余白にする）。
+    盤の大きさは、ヘッダーとパネルを除いた高さ（--board-h、app.ts が測って入れる）と幅から決める
+  */
+  grid-template-rows: auto auto auto;
+  align-content: center;
+  --board-h: calc(100dvh - 200px);
   /* 中身（長い文字など）に引っ張られて画面より広くならないようにする */
   grid-template-columns: minmax(0, 1fr);
   gap: 4px;
 }
 
-/* 盤の領域。幅と高さの両方から1マスの大きさを決める（.board-area の --cell） */
+/* 盤の領域。幅と --board-h から1マスの大きさを決める（.board-area の --cell） */
 .app-main {
-  container-type: size;
-  min-height: 0;
+  container-type: inline-size;
   display: flex;
-  align-items: center;
   justify-content: center;
 }
 
@@ -123,7 +127,7 @@ button {
     高さ：盤の9段（1マスの高さは幅の1.09倍）と駒台2つ（各1.09マス＋余白12px）、枠・すき間の約40pxで約12マス分。
   */
   --frame-pad: 4px;
-  --cell: min((100cqw - var(--frame-pad) * 2 - 4px) / 9, (100cqh - 44px) / 12);
+  --cell: min((100cqw - var(--frame-pad) * 2 - 4px) / 9, (var(--board-h) - 44px) / 12);
   --cell-h: calc(var(--cell) * 1.09);
   width: calc(var(--cell) * 9 + var(--frame-pad) * 2 + 4px);
 }
