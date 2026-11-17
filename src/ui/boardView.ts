@@ -52,6 +52,7 @@ export class BoardView {
   private readonly topHand: HTMLElement;
   private readonly bottomHand: HTMLElement;
   private readonly grid: HTMLElement;
+  private readonly frame: HTMLElement;
   private readonly pieces: HTMLElement;
   private model: BoardViewModel | null = null;
   /** 今置いている駒の局面と向き（同じなら駒を置き直さない） */
@@ -71,6 +72,7 @@ export class BoardView {
     this.topHand = this.el.querySelector('.hand-top')!;
     this.bottomHand = this.el.querySelector('.hand-bottom')!;
     this.grid = this.el.querySelector('.board')!;
+    this.frame = this.el.querySelector('.board-frame')!;
     this.pieces = this.el.querySelector('.pieces')!;
 
     for (let d = 0; d < 81; d++) {
@@ -257,8 +259,8 @@ export class BoardView {
   }
 
   /**
-   * 着地の瞬間（対局中）。駒を大きく押しつぶして弾み返らせ、置いたマスから光の波紋を盤全体に広げ、
-   * マスを白く光らせて衝撃の輪を2重に広げ、木くずを四方に飛ばす。盤そのものは動かさない
+   * 着地の瞬間（対局中）。駒を大きく押しつぶして弾み返らせ、盤ごと沈ませて揺らし、置いたマスから光の波紋を盤全体に広げ、
+   * マスを白く光らせて衝撃の輪を2重に広げ、木くずを四方に飛ばす
    */
   private impact(el: HTMLElement): void {
     el.querySelector<HTMLElement>('.pc-face')!.animate(
@@ -269,6 +271,17 @@ export class BoardView {
         { transform: 'scale(1)' },
       ],
       { duration: 140, easing: 'cubic-bezier(.2,.7,.3,1)' },
+    );
+    const side = Math.random() < 0.5 ? -1 : 1;
+    this.frame.animate(
+      [
+        { transform: 'translate(0, 0) scale(1)' },
+        { transform: `translate(${side * 1.5}px, 4px) scale(0.985)`, offset: 0.15 },
+        { transform: `translate(${-side * 1}px, -1.5px) scale(1.004)`, offset: 0.45 },
+        { transform: `translate(${side * 0.5}px, 0.5px) scale(1)`, offset: 0.75 },
+        { transform: 'translate(0, 0) scale(1)' },
+      ],
+      { duration: 220, easing: 'ease-out' },
     );
 
     // 光と輪は駒の下に、木くずは駒の上に描く
@@ -317,7 +330,7 @@ export class BoardView {
       );
     }
 
-    // 盤全体への波紋。盤は動かさず、置いたマスを中心に光の輪が盤の端まで広がって消える
+    // 盤全体への波紋。置いたマスを中心に光の輪が盤の端まで広がって消える
     const board = this.pieces.getBoundingClientRect();
     const c = center(el.getBoundingClientRect());
     const cx = c.x - board.left;
