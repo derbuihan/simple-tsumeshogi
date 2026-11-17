@@ -2,7 +2,7 @@
 // cf r2 objects put --local は1件ごとにプロセスを起動するので遅い。こちらは1プロセスから、複数ファイルをまとめて送る。
 // 使い方: node scripts/upload-problems-local.mjs [mate3 mate5 ...]
 // 環境変数: DEV_URL（既定 http://localhost:5173）, BATCH（1リクエストのファイル数、既定 50）, JOBS（並列数、既定 4）,
-//           PROBLEMS_DIR（既定 .cache/minimal-hand/public/data）
+//           PROBLEMS_DIR（既定 .cache/regen-solutions/public/data）
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -10,7 +10,7 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const DEV_URL = process.env.DEV_URL ?? 'http://localhost:5173';
 const BATCH = Number(process.env.BATCH ?? 50);
 const JOBS = Number(process.env.JOBS ?? 4);
-const DIR = process.env.PROBLEMS_DIR ?? path.join(ROOT, '.cache/minimal-hand/public/data');
+const DIR = process.env.PROBLEMS_DIR ?? path.join(ROOT, '.cache/regen-solutions/public/data');
 const books = process.argv.length > 2 ? process.argv.slice(2) : ['mate3', 'mate5', 'mate7', 'mate9', 'mate11'];
 
 if (!fs.existsSync(path.join(DIR, books[0]))) {

@@ -104,8 +104,8 @@ npm run filter:minimal-hand -- --engine "$PWD/.cache/research/YaneuraOu/source/Y
 
 全件の出力を本番データへ反映する前に、No・未解決・処理エラーの件数を集計し、未解決が残った場合は時間上限を増やして再処理する。既定では未解決棋譜は出力されない。
 
-本番へ反映するときは、出力から索引を作り直し（`npm run build:index`）、同じ出力を R2 に上げる（`npm run upload:problems`、既定の入力が `.cache/minimal-hand/public/data`）。
-問題を除くと行番号（問題 ID の一部）がずれるので、解答履歴（KV）もリセットする。
+この出力を直接本番へ反映する場合は、`node scripts/build-problem-index.mjs .cache/minimal-hand/public/data public/problems-index.json` で索引を作り直し、`PROBLEMS_DIR="$PWD/.cache/minimal-hand/public/data" npm run upload:problems` で同じ出力を R2 に上げる。現在の配信データは、さらに下記の正解手順の作り直しを行った出力である。
+問題を除くと行番号（問題 ID の一部）がずれるので、解答履歴（D1）もリセットする。
 
 ## 正解手順の作り直し（玉方の応手をアプリに合わせる）
 
@@ -144,5 +144,5 @@ npm run regen:solutions       # 入力 .cache/minimal-hand/public/data → 出�
   | 9手詰 | 19/40 | 34/40 |
   | 11手詰 | 18/40 | 32/40 |
 
-反映するときは、出力から索引を作り（`node scripts/build-problem-index.mjs .cache/regen-solutions/public/data public/problems-index.json`）、同じ出力を R2 に上げる（`PROBLEMS_DIR=.cache/regen-solutions/public/data npm run upload:problems`）。
-重複を除いたので行番号（問題 ID の一部）がずれる。解答履歴（KV）もリセットする。
+反映するときは、出力から索引を作り（`npm run build:index`）、同じ出力を R2 に上げる（`npm run upload:problems`）。
+重複を除いたので行番号（問題 ID の一部）がずれる。解答履歴（D1）もリセットする。`--missing` はファイルサイズのみで比較し、サイズが同じ内容変更を検出できないため、この更新の全件反映には使わない。既存ブラウザの問題キャッシュにも注意する。

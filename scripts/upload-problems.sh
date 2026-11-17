@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 問題データ（npm run filter:minimal-hand で .cache/minimal-hand に変換したもの）を R2 にアップロードする。
+# 正解手順を作り直した問題データを R2 にアップロードする。
 # 📝 public/problems-index.json（npm run build:index）と同じデータを上げること。行番号が問題 ID なので、ずれると読み込めない。
 # キー: mate{N}/NNN.txt
 # 使い方:
@@ -8,14 +8,14 @@
 #   scripts/upload-problems.sh --local          # ローカル（cf dev 用）の R2 へ全部。起動中の cf dev 経由で入れる（scripts/upload-problems-local.mjs）
 #   scripts/upload-problems.sh --local mate3    # ローカルの R2 へ mate3 だけ
 # 環境変数: BUCKET（既定 simple-tsumeshogi-problems）, JOBS（並列数、既定 2）,
-#           PROBLEMS_DIR（既定 .cache/minimal-hand/public/data）
+#           PROBLEMS_DIR（既定 .cache/regen-solutions/public/data）
 #
 # 📝 cf r2 objects put は Cloudflare REST API を1ファイル1回呼ぶ。API には5分あたり1,200リクエストの
 #    上限があり、超えると 429 (code 971) で弾かれるので、並列数は小さく保つ（1ファイル約1秒 × 2並列 ≒ 毎秒2件）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUCKET="${BUCKET:-simple-tsumeshogi-problems}"
-PROBLEMS_DIR="${PROBLEMS_DIR:-$ROOT/.cache/minimal-hand/public/data}"
+PROBLEMS_DIR="${PROBLEMS_DIR:-$ROOT/.cache/regen-solutions/public/data}"
 LOCAL_FLAG=""
 MISSING=0
 while [ $# -gt 0 ]; do
@@ -33,7 +33,7 @@ if [ -n "$LOCAL_FLAG" ]; then
 fi
 JOBS="${JOBS:-2}"
 
-[ -d "$PROBLEMS_DIR/mate3" ] || { echo "問題データがありません。先に npm run fetch:problems と npm run filter:minimal-hand を実行してください: $PROBLEMS_DIR" >&2; exit 1; }
+[ -d "$PROBLEMS_DIR/mate3" ] || { echo "問題データがありません。先に npm run regen:solutions を実行するか PROBLEMS_DIR を指定してください: $PROBLEMS_DIR" >&2; exit 1; }
 cd "$PROBLEMS_DIR"
 LIST="$(mktemp)"
 trap 'rm -f "$LIST"' EXIT

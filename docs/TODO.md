@@ -34,7 +34,7 @@
 
 ## 動作確認
 
-- [ ] **スマホ実機で確認する**（iPhone の Safari、Android の Chrome）
+- [x] **スマホ実機で確認する**（iPhone の Safari、Android の Chrome）
   - WASM（pthread）の起動、タップ操作、成／不成ダイアログ、縦画面での盤の大きさ。
   - iOS の Safari では、共有メモリの確保（最大4GB の設定）に失敗しないか特に確認する。
 - [ ] **PC とスマホで履歴が同期されることを本番で確認する**

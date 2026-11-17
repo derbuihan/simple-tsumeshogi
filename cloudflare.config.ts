@@ -18,7 +18,7 @@ export default defineConfig({
     env: {
       // 解答履歴（D1: simple-tsumeshogi-history。表は migrations/ を cf d1 migrations apply で作る）
       HISTORY: bindings.d1({ id: 'ab9dab8a-1b3d-4727-9f05-26a94b1f579b' }),
-      // 問題データ（.cache/minimal-hand/public/data を scripts/upload-problems.sh でアップロード）
+      // 問題データ（.cache/regen-solutions/public/data を scripts/upload-problems.sh でアップロード）
       PROBLEMS: bindings.r2({ name: 'simple-tsumeshogi-problems' }),
       // 履歴の書き込み（POST）を IP ごとに60秒30回まで（上限は拠点ごとの概算）
       HISTORY_WRITE_LIMITER: bindings.rateLimit({ namespace: '1001', simple: { limit: 30, period: 60 } }),
