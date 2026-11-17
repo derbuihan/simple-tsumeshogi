@@ -5,7 +5,9 @@ export default defineConfig({
     name: 'tsumeshogi',
     compatibilityDate: '2026-11-01',
     entrypoint: './worker/index.ts',
-    // バージョンごとのプレビュー用 URL は使わない
+    // 公開は独自ドメインだけ。ゾーンの WAF・レート制限が効かない workers.dev と、バージョンごとのプレビュー用 URL は止める
+    domains: ['tsumeshogi.houchishoujo.com'],
+    workersDev: false,
     previewUrls: false,
     assets: {
       // API と問題データ（と開発時の投入口）だけ Worker で処理し、それ以外は静的アセットとして返す
