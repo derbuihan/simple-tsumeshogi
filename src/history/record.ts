@@ -103,7 +103,7 @@ export function problemStatus(r: ProblemRecord | undefined): ProblemStatus {
   return r.clears > 0 ? 'solved' : 'unsolved';
 }
 
-/** KV に保存する形 */
+/** 端末の localStorage に保存する集計の形（サーバーの集計は D1 の SQL で作る。api.ts） */
 export interface StoredHistory {
   version: 1;
   records: Records;
@@ -112,8 +112,6 @@ export interface StoredHistory {
 }
 
 export const RECENT_EVENT_LIMIT = 1000;
-/** 1人分の履歴に入れる問題数の上限（KV の値が際限なく大きくならないように） */
-export const MAX_RECORDS = 20000;
 
 export const emptyHistory = (): StoredHistory => ({ version: 1, records: {}, recentEventIds: [] });
 
@@ -123,7 +121,6 @@ export function applyEvents(h: StoredHistory, events: readonly HistoryEvent[]): 
   let n = 0;
   for (const ev of events) {
     if (!isValidEvent(ev) || seen.has(ev.id)) continue;
-    if (!(ev.problemId in h.records) && Object.keys(h.records).length >= MAX_RECORDS) continue;
     applyEvent(h.records, ev);
     seen.add(ev.id);
     h.recentEventIds.push(ev.id);
