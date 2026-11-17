@@ -5,3 +5,5 @@ engine/build/
 .DS_Store
 .cache/
 .cloudflare/
+
+__pycache__/
