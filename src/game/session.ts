@@ -11,7 +11,8 @@ import type { Problem } from './problem';
  * その差で正誤が分からないよう、画面側は応手を見せるまでの時間をこの値にそろえる。
  */
 export function defenderMovetimeMs(remainingPlies: number): number {
-  // 計測（PC の Node、mini）: 詰みが見つかるまでの最大は残り4手まで約5ms、6手で約50ms、8手で約400ms、10手で約2秒。
+  // 計測（PC の Node、mini）: 詰みが見つかるまでの最大は残り4手まで約50ms、6手で約300ms。
+  // 残り8・10手はこの時間では見落としがある（4スレッドで残り10手の約1割。docs/engine-tuning.md）。
   // スマホは数倍遅いので、その分を見込む。時間内に見落としても、たいてい猶予に入り次の手で取り消される
   if (remainingPlies <= 4) return 300;
   if (remainingPlies <= 6) return 500;

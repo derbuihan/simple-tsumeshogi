@@ -80,7 +80,7 @@ export class EngineClient implements EngineLike {
     await this.exec(async () => {
       await this.sendAndWait('usi', (l) => l === 'usiok');
       for (const [name, value] of [
-        ['Threads', '1'],
+        ['Threads', '4'],
         ['USI_Hash', '16'],
         ['EvalDir', '/eval'],
         ['NetworkDelay', '0'],

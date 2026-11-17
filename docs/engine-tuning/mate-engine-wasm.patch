@@ -1,0 +1,20 @@
+--- a/source/engine/yaneuraou-mate-engine/yaneuraou-mate-search.cpp	2026-11-15 21:14:02.531713692 +0900
++++ b/source/engine/yaneuraou-mate-engine/yaneuraou-mate-search.cpp	2026-11-17 13:34:19.140403795 +0900
+@@ -71,7 +71,7 @@
+             u64  nodes_searched = solver.get_nodes_searched();
+ 
+             // nps算出
+-            u64 nps = nodes_searched * 1000 / elapsed;
++            u64 nps = nodes_searched * 1000 / std::max<TimePoint>(elapsed, 1);
+ 
+             sync_cout << "info time " << elapsed << " nodes " << nodes_searched << " nps " << nps
+                       << " hashfull " << solver.hashfull() << " pv"
+@@ -86,7 +86,7 @@
+         // 探索の終了を待つ
+         while (!threads.stop && !time_up() && move.load() == Move::resign())
+         {
+-            Tools::sleep(100);
++            Tools::sleep(1);
+ 
+             auto elapsed = time.elapsed();
+             if (pvInterval && elapsed > lastPvOutput + pvInterval)
