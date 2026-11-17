@@ -1,6 +1,7 @@
 import { applyEvents, emptyHistory, type HistoryEvent, type Outcome, type Records, type StoredHistory } from './record';
 
 const CACHE_KEY = 'tsume.history.v1';
+const ID_KEY = 'tsume.historyId';
 const API = `${import.meta.env.BASE_URL}api/history`;
 
 export type SyncState = 'synced' | 'pending' | 'offline';
@@ -9,6 +10,21 @@ interface Cache {
   history: StoredHistory;
   /** サーバーにまだ届いていないイベント */
   pending: HistoryEvent[];
+}
+
+/**
+ * この端末の履歴 ID（推測できないランダムな UUID）。サーバーの保存キーになる。
+ * localStorage を消すと別の履歴になる。localStorage が使えないときはページを開いている間だけ有効。
+ */
+let memoryId: string | null = null;
+function historyId(): string {
+  try {
+    let id = localStorage.getItem(ID_KEY);
+    if (!id) localStorage.setItem(ID_KEY, (id = crypto.randomUUID()));
+    return id;
+  } catch {
+    return (memoryId ??= crypto.randomUUID());
+  }
 }
 
 /**
@@ -34,7 +50,7 @@ export class HistoryStore {
     await this.flush();
     if (this.cache.pending.length) return;
     try {
-      const res = await fetch(API, { headers: { accept: 'application/json' } });
+      const res = await fetch(API, { headers: { accept: 'application/json', 'x-history-id': historyId() } });
       if (!res.ok) throw new Error(String(res.status));
       const { records } = (await res.json()) as { records: Records };
       this.cache.history.records = records;
@@ -66,7 +82,7 @@ export class HistoryStore {
       try {
         const res = await fetch(API, {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'x-history-id': historyId() },
           body: JSON.stringify({ events: batch }),
         });
         if (!res.ok) throw new Error(String(res.status));

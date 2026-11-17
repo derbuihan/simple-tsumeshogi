@@ -112,6 +112,8 @@ export interface StoredHistory {
 }
 
 export const RECENT_EVENT_LIMIT = 1000;
+/** 1人分の履歴に入れる問題数の上限（KV の値が際限なく大きくならないように） */
+export const MAX_RECORDS = 20000;
 
 export const emptyHistory = (): StoredHistory => ({ version: 1, records: {}, recentEventIds: [] });
 
@@ -121,6 +123,7 @@ export function applyEvents(h: StoredHistory, events: readonly HistoryEvent[]): 
   let n = 0;
   for (const ev of events) {
     if (!isValidEvent(ev) || seen.has(ev.id)) continue;
+    if (!(ev.problemId in h.records) && Object.keys(h.records).length >= MAX_RECORDS) continue;
     applyEvent(h.records, ev);
     seen.add(ev.id);
     h.recentEventIds.push(ev.id);
@@ -140,9 +143,12 @@ export function isValidEvent(ev: unknown): ev is HistoryEvent {
     e.id.length > 0 &&
     e.id.length <= 64 &&
     typeof e.problemId === 'string' &&
-    /^mate\d+\/\d{3}\/\d+$/.test(e.problemId) &&
+    /^mate(?:3|5|7|9|11)\/\d{3}\/\d{1,6}$/.test(e.problemId) &&
     OUTCOMES.has(e.outcome as Outcome) &&
     typeof e.at === 'number' &&
-    (e.moves === undefined || (typeof e.moves === 'number' && e.moves > 0))
+    Number.isFinite(e.at) &&
+    e.at > 0 &&
+    e.at < 4e12 &&
+    (e.moves === undefined || (typeof e.moves === 'number' && Number.isInteger(e.moves) && e.moves > 0 && e.moves <= 99))
   );
 }

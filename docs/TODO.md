@@ -4,10 +4,15 @@
 
 ## セキュリティ
 
-- [ ] **Cloudflare Access でアプリを保護する**
-  - 現状は URL を知っていれば誰でも `/api/history` を読み書きでき、履歴は全員共通の `default` キーに入る。
-  - Access を付けると、Access が付与するメールアドレスごとに KV のキーが分かれる（`src/history/api.ts` の `historyKey`）。
-  - 問題データ（`/problems/*`）は公開データなので、保護しなくてもよい。
+- [x] 認証なしで公開しても困らないようにする（2026-11-17）
+  - 公開は `tsumeshogi.houchishoujo.com` だけ（workers.dev は止めた）。ゾーンの既存ルール JapanOnlyAccess で日本国外はブロック。
+  - ゾーンの Rate Limiting rule: `/api/*` を IP ごとに10秒10回まで（Free は10秒単位・1ルール・Path 条件のみ。ホスト名では絞れない）。
+  - Worker: 履歴の POST を IP ごとに60秒30回まで（Rate Limiting バインディング）、本文128KB 上限、入力の範囲検査、1人分は 20,000 問まで。
+  - 履歴は端末が作るランダムな UUID（localStorage `tsume.historyId`、ヘッダー `x-history-id`）ごとに KV へ保存。ID が無いと 400。
+  - Workers ログを有効（サンプリング 0.2）。Free は枠に達すると止まるだけで課金されない。
+  - 残り: 端末間の履歴同期（ID の引き継ぎ）、CSP、`ssh.houchishoujo.com` の Cloudflare Access（最後にやる）。
+- [ ] **履歴を別の端末に引き継ぐ**
+  - 今は端末ごとに別の履歴。履歴 ID を表示・入力できるようにすれば PC とスマホで共有できる。
 
 ## 問題の質
 

@@ -17,8 +17,15 @@ interface R2BucketLike {
   put(key: string, value: string, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
 }
 
+/** Workers の Rate Limiting バインディング */
+interface RateLimitLike {
+  limit(options: { key: string }): Promise<{ success: boolean }>;
+}
+
 export interface Env {
   HISTORY: KVLike;
+  /** 履歴の書き込み（POST）を IP ごとに制限する。KV の書き込み枠（無料は1日1,000回）を使い切られないように */
+  HISTORY_WRITE_LIMITER: RateLimitLike;
   PROBLEMS: R2BucketLike;
   ASSETS: { fetch(request: Request): Promise<Response> };
 }
@@ -59,7 +66,14 @@ export default {
     const url = new URL(request.url);
     // 📝 import.meta.env.DEV は Vite が置き換える（cf dev では true、ビルドでは false になり分岐ごと消える）
     if (import.meta.env.DEV && url.pathname === '/__dev/problems') return putProblemsForDev(request, env);
-    if (url.pathname === '/api/history') return handleHistory(request, env.HISTORY);
+    if (url.pathname === '/api/history') {
+      if (request.method === 'POST') {
+        const ip = request.headers.get('cf-connecting-ip') ?? 'unknown';
+        const { success } = await env.HISTORY_WRITE_LIMITER.limit({ key: ip });
+        if (!success) return new Response(JSON.stringify({ error: 'rate limited' }), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '60' } });
+      }
+      return handleHistory(request, env.HISTORY);
+    }
     if (url.pathname.startsWith('/problems/')) {
       const m = url.pathname.match(PROBLEM_PATH);
       if (!m || (request.method !== 'GET' && request.method !== 'HEAD')) return new Response('not found', { status: 404 });

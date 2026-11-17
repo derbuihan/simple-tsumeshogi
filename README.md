@@ -10,7 +10,7 @@
 - 問題：3・5・7・9・11手詰 約500万問
 - 玉方：やねうら王 + つようら王11mini（設定で11micro）
 - 詰み判定：やねうら王の詰将棋エンジン版（df-pn）。結論が出ないときは mini で判定（[docs/engine-tuning.md](docs/engine-tuning.md)）
-- 配信：Cloudflare Workers（静的アセット）+ Access、問題データ：R2、履歴：Workers KV
+- 配信：Cloudflare Workers（静的アセット、独自ドメイン `tsumeshogi.houchishoujo.com`）、問題データ：R2、履歴：Workers KV
 
 ## セットアップ
 
