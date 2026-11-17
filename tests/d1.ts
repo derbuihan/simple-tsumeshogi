@@ -1,11 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import type { D1Like, D1StatementLike } from '../src/history/api';
 
 /** node:sqlite で D1 の代わりを作る（migrations/ の SQL をそのまま流す） */
 export const memoryD1 = () => {
   const sqlite = new DatabaseSync(':memory:');
-  sqlite.exec(readFileSync('migrations/0001_history_events.sql', 'utf8'));
+  for (const f of readdirSync('migrations').sort()) sqlite.exec(readFileSync(`migrations/${f}`, 'utf8'));
   const stmt = (sql: string, values: unknown[] = []): D1StatementLike => ({
     bind: (...v) => stmt(sql, v),
     all: async <T>() => ({ results: sqlite.prepare(sql).all(...(values as never[])) as T[] }),

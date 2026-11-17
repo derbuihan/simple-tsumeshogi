@@ -1,18 +1,16 @@
 /**
  * /api/history のハンドラ。Worker（worker/index.ts）から呼ばれる。
  *
- *   GET  /api/history?since=N                    → { events, next, more }
- *   POST /api/history { events: [...], since: N } → { events, next, more }   （追記してから、同じ形で差分を返す）
+ *   GET  /api/history                  → { records }   （問題ごとの集計。D1 の SQL で集計して返す）
+ *   POST /api/history { events: [...] } → { received }   （有効なイベントの数。追記済みの再送は無視される）
  *
- * 履歴は追記専用のイベントの表（D1: history_events）。集計はクライアントが行う。
- *   - events: seq が N より後のイベント（seq の順、最大 PAGE_SIZE 件）。クライアントは next を次の since に使う
- *   - more: まだ続きがある（続けて取りに来る）
- *   - 同じ (device_id, id) の再送は無視される（二重にならない）
+ * 履歴は追記専用のイベントの表（D1: history_events）1つだけ。集計は読むときに SQL（GROUP BY）で行い、
+ * クライアントは返ってきた集計をそのまま使う。同じ (device_id, id) の再送は無視される（二重にならない）。
  *
  * 認証は無い（誰でも呼べる）。履歴は、端末が作る推測できないランダムな ID（ヘッダー x-history-id、UUID）ごとに分ける。
  * ID を知らない人は他人の履歴を読み書きできない。ID が無い・形式が違うリクエストは 400。
  */
-import { isValidEvent, type HistoryEvent } from './record';
+import { isValidEvent, type Records } from './record';
 
 /** D1 のうち使う部分 */
 export interface D1StatementLike {
@@ -25,8 +23,6 @@ export interface D1Like {
 }
 
 const MAX_EVENTS_PER_REQUEST = 500;
-/** 1回の応答に入れるイベントの最大数。超えるときは more: true で続きを取りに来させる */
-const PAGE_SIZE = 500;
 /** 500 件のイベントでも約 75KB なので、余裕を見て 128KB を超える本文は読まない */
 const MAX_BODY_BYTES = 128 * 1024;
 const HISTORY_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -43,35 +39,44 @@ export function historyId(request: Request): string | null {
   return id && HISTORY_ID.test(id) ? id : null;
 }
 
-interface Row {
-  seq: number;
-  id: string;
+/**
+ * 問題ごとの集計（record.ts の applyEvent と同じ規則）。
+ *   clears            : 自力クリア（shortest, clear）。解答を見た後のクリアは clearsAfterViewing に入れる
+ *   bestMoves/firstClearAt : 3種のクリア（解答を見た後を含む）の最短手数／最初の時刻
+ *   lastAt/lastOutcome: 最も新しい at のイベント（同じ時刻なら後から追記したもの）
+ */
+const AGGREGATE_SQL = `
+WITH t AS (
+  SELECT problem_id, outcome, moves, at,
+         ROW_NUMBER() OVER (PARTITION BY problem_id ORDER BY at DESC, seq DESC) AS rn
+  FROM history_events WHERE device_id = ?1
+)
+SELECT problem_id AS problemId,
+       COUNT(*) AS attempts,
+       SUM(outcome IN ('shortest', 'clear')) AS clears,
+       SUM(outcome = 'shortest') AS shortest,
+       SUM(outcome = 'clear-after-viewing') AS clearsAfterViewing,
+       SUM(outcome = 'fail') AS fails,
+       SUM(outcome = 'giveup') AS giveups,
+       MIN(CASE WHEN outcome IN ('shortest', 'clear', 'clear-after-viewing') THEN moves END) AS bestMoves,
+       MIN(CASE WHEN outcome IN ('shortest', 'clear', 'clear-after-viewing') THEN at END) AS firstClearAt,
+       MAX(at) AS lastAt,
+       MAX(CASE WHEN rn = 1 THEN outcome END) AS lastOutcome
+FROM t GROUP BY problem_id`;
+
+interface AggregateRow {
   problemId: string;
-  outcome: HistoryEvent['outcome'];
-  moves: number | null;
-  at: number;
+  attempts: number;
+  clears: number;
+  shortest: number;
+  clearsAfterViewing: number;
+  fails: number;
+  giveups: number;
+  bestMoves: number | null;
+  firstClearAt: number | null;
+  lastAt: number;
+  lastOutcome: Records[string]['lastOutcome'];
 }
-
-async function eventsSince(db: D1Like, deviceId: string, since: number) {
-  const { results } = await db
-    .prepare(
-      'SELECT seq, id, problem_id AS problemId, outcome, moves, at FROM history_events WHERE device_id = ?1 AND seq > ?2 ORDER BY seq LIMIT ?3',
-    )
-    .bind(deviceId, since, PAGE_SIZE + 1)
-    .all<Row>();
-  const more = results.length > PAGE_SIZE;
-  const page = more ? results.slice(0, PAGE_SIZE) : results;
-  const events = page.map((r) => ({
-    id: r.id,
-    problemId: r.problemId,
-    outcome: r.outcome,
-    ...(r.moves === null ? {} : { moves: r.moves }),
-    at: r.at,
-  }));
-  return { events, next: page.length ? page[page.length - 1].seq : since, more };
-}
-
-const toSince = (v: unknown): number => (typeof v === 'number' || typeof v === 'string') && Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : 0;
 
 export async function handleHistory(request: Request, db: D1Like): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'POST') return json({ error: 'method not allowed' }, 405);
@@ -79,20 +84,27 @@ export async function handleHistory(request: Request, db: D1Like): Promise<Respo
   if (!deviceId) return json({ error: 'invalid history id' }, 400);
 
   if (request.method === 'GET') {
-    const since = toSince(new URL(request.url).searchParams.get('since'));
-    return json(await eventsSince(db, deviceId, since));
+    const { results } = await db.prepare(AGGREGATE_SQL).bind(deviceId).all<AggregateRow>();
+    const records: Records = {};
+    for (const { problemId, bestMoves, firstClearAt, ...r } of results) {
+      records[problemId] = {
+        ...r,
+        ...(bestMoves === null ? {} : { bestMoves }),
+        ...(firstClearAt === null ? {} : { firstClearAt }),
+      };
+    }
+    return json({ records });
   }
 
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json({ error: 'too large' }, 413);
-  let body: { events?: unknown; since?: unknown };
+  let events: unknown;
   try {
     const text = await request.text();
     if (text.length > MAX_BODY_BYTES) return json({ error: 'too large' }, 413);
-    body = JSON.parse(text) as { events?: unknown; since?: unknown };
+    events = (JSON.parse(text) as { events?: unknown })?.events;
   } catch {
     return json({ error: 'invalid json' }, 400);
   }
-  const events = body?.events;
   if (!Array.isArray(events) || events.length > MAX_EVENTS_PER_REQUEST) return json({ error: 'invalid events' }, 400);
   const valid = events.filter(isValidEvent);
   if (valid.length) {
@@ -101,5 +113,5 @@ export async function handleHistory(request: Request, db: D1Like): Promise<Respo
     );
     await db.batch(valid.map((e) => insert.bind(deviceId, e.id, e.problemId, e.outcome, e.moves ?? null, e.at)));
   }
-  return json(await eventsSince(db, deviceId, toSince(body.since)));
+  return json({ received: valid.length });
 }

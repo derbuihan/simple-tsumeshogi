@@ -12,9 +12,7 @@ vi.stubGlobal('localStorage', {
 
 let db = memoryD1();
 let online = true;
-let requests = 0;
 vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
-  requests++;
   if (!online) throw new TypeError('offline');
   return handleHistory(new Request(new URL(url, 'http://x'), init), db.db);
 });
@@ -28,7 +26,6 @@ beforeEach(() => {
   storage.clear();
   db = memoryD1();
   online = true;
-  requests = 0;
 });
 
 describe('HistoryStore', () => {
@@ -42,7 +39,7 @@ describe('HistoryStore', () => {
     expect(s.records['mate3/000/1'].attempts).toBe(1); // 二重に数えない
   });
 
-  it('別の端末は、同じ履歴 ID でサーバーの分を取り込める', async () => {
+  it('別の端末は、同じ履歴 ID でサーバーの集計を取得できる', async () => {
     const a = new HistoryStore();
     a.record('mate3/000/1', 'shortest', 3);
     a.record('mate3/000/2', 'fail');
@@ -53,8 +50,7 @@ describe('HistoryStore', () => {
     const b = new HistoryStore();
     await b.sync();
     expect(Object.keys(b.records).sort()).toEqual(['mate3/000/1', 'mate3/000/2']);
-    await b.sync();
-    expect(b.records['mate3/000/1'].attempts).toBe(1);
+    expect(b.records['mate3/000/1']).toMatchObject({ attempts: 1, shortest: 1, bestMoves: 3 });
   });
 
   it('オフラインの記録は残り、復帰したときにまとめて届く', async () => {
@@ -70,17 +66,5 @@ describe('HistoryStore', () => {
     expect(s.syncState).toBe('synced');
     expect(db.count()).toBe(1);
     expect(s.records['mate3/000/1'].attempts).toBe(1);
-  });
-
-  it('再読み込みしても（キャッシュから）続きだけを取る', async () => {
-    const a = new HistoryStore();
-    a.record('mate3/000/1', 'shortest', 3);
-    await settle(a);
-    const b = new HistoryStore();
-    expect(b.records['mate3/000/1'].attempts).toBe(1);
-    requests = 0;
-    await b.sync();
-    expect(requests).toBe(1);
-    expect(b.records['mate3/000/1'].attempts).toBe(1);
   });
 });
