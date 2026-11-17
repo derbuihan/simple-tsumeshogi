@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { EngineLike, EnginePosition } from '../src/engine/types';
+import { parseCheckmate } from '../src/engine/MateClient';
+import type { EngineLike, EnginePosition, MateSolverLike, MateVerdict } from '../src/engine/types';
 import { parseInfo, type ThinkResult } from '../src/engine/usi';
 import { parseProblemLine } from '../src/game/problem';
 import { graceMoves, Session } from '../src/game/session';
@@ -23,6 +24,23 @@ function mockEngine(tree: Record<string, Node>): EngineLike {
     think: async (pos) => at(pos).think!,
   };
 }
+
+/** 攻方の手番の局面（指し手列）ごとに判定を決めた詰み専用エンジンのモック。調べた局面を solved に残す */
+function mockSolver(verdicts: Record<string, MateVerdict>): MateSolverLike & { solved: string[] } {
+  const solved: string[] = [];
+  return {
+    solved,
+    solve: async (pos) => {
+      const key = pos.moves.join(' ');
+      const v = verdicts[key];
+      if (!v) throw new Error(`unexpected mate query: [${key}]`);
+      solved.push(key);
+      return v;
+    },
+  };
+}
+
+const cp = (value: number, bestmove: string): ThinkResult => ({ bestmove, score: { kind: 'cp', value }, pv: [] });
 
 const mated = (n: number, bestmove: string): ThinkResult => ({
   bestmove,
@@ -239,5 +257,108 @@ describe('parseInfo', () => {
     expect(parseInfo('info depth 3 score cp 120 upperbound pv 7g7f')?.score).toEqual({ kind: 'cp', value: 120 });
     expect(parseInfo('info string loading')).toBeNull();
     expect(parseInfo('info depth 1 score mate -0')?.score).toMatchObject({ kind: 'mate', sign: '-' });
+  });
+});
+
+describe('Session（詰み専用エンジンで判定）', () => {
+  const problem = parseProblemLine('mate3/000/0', LINE);
+
+  it('mini が詰みを見落としても、すべての応手で詰めば続行（遠回りの詰みも詰み）', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: cp(-900, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'mate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0 });
+    await s.start();
+    expect((await s.playAttacker('6h5g+')).kind).toBe('attacker-turn');
+    expect(solver.solved).toEqual(['6h5g+ 4h5g', '6h5g+ 4h5h']);
+  });
+
+  it('mini が詰みと読んでも、詰まない応手があれば詰みを逃した', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: mated(9, '4h5g') },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'nomate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
+    await s.start();
+    expect(await s.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
+  });
+
+  it('猶予中は、mini の最善手が詰む応手なら、詰まない応手で応じる', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5h': { checks: ['B*6f'] },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'nomate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
+    await s.start();
+    const replies: string[] = [];
+    expect((await s.playAttacker('6h5g+', (m) => replies.push(m))).kind).toBe('attacker-turn');
+    expect(replies).toEqual(['4h5h']);
+  });
+
+  it('mini の最善手が詰まない応手なら、そのまま応じる', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: cp(-2500, '4h5h') },
+      '6h5g+ 4h5h': { checks: ['B*6f'] },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'nomate', '6h5g+ 4h5h': 'nomate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
+    await s.start();
+    const replies: string[] = [];
+    await s.playAttacker('6h5g+', (m) => replies.push(m));
+    expect(replies).toEqual(['4h5h']);
+  });
+
+  it('結論が出なければ mini の探索結果で決める', async () => {
+    const tree = (think: ThinkResult) =>
+      mockEngine({
+        '': { checks: ['6h5g+'] },
+        '6h5g+': { legal: ['4h5g', '4h5h'], think },
+        '6h5g+ 4h5g': { checks: ['B*6f'] },
+      });
+    const solver = () => mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'unknown' });
+    const a = new Session(problem, tree(mated(4, '4h5g')), { mateSolver: solver(), random: () => 0 });
+    await a.start();
+    expect((await a.playAttacker('6h5g+')).kind).toBe('attacker-turn');
+    const b = new Session(problem, tree(cp(-100, '4h5g')), { mateSolver: solver(), random: () => 0 });
+    await b.start();
+    expect(await b.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
+  });
+
+  it('持ち時間を使い切ったら、残りの応手は調べず unknown', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: mated(4, '4h5g') },
+      '6h5g+ 4h5g': { checks: ['B*6f'] },
+    });
+    const slow: MateSolverLike & { solved: string[] } = {
+      solved: [],
+      async solve(pos, timeoutMs) {
+        this.solved.push(pos.moves.join(' '));
+        await new Promise((r) => setTimeout(r, timeoutMs + 5));
+        return 'unknown';
+      },
+    };
+    const s = new Session(problem, engine, { mateSolver: slow, movetimeMs: () => 20, random: () => 0 });
+    await s.start();
+    expect((await s.playAttacker('6h5g+')).kind).toBe('attacker-turn');
+    expect(slow.solved).toEqual(['6h5g+ 4h5g']);
+  });
+});
+
+describe('parseCheckmate', () => {
+  it('詰み手順・不詰・結論なし', () => {
+    expect(parseCheckmate('checkmate 7g7f 3c3d G*2b')).toBe('mate');
+    expect(parseCheckmate('checkmate G*5b')).toBe('mate');
+    expect(parseCheckmate('checkmate 2c2b+')).toBe('mate');
+    expect(parseCheckmate('checkmate nomate')).toBe('nomate');
+    expect(parseCheckmate('checkmate timeout')).toBe('unknown');
+    expect(parseCheckmate('checkmate none')).toBe('unknown');
   });
 });

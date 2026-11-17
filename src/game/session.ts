@@ -1,4 +1,4 @@
-import type { EngineLike } from '../engine/types';
+import type { EngineLike, EnginePosition, MateSolverLike, MateVerdict } from '../engine/types';
 import { isMatedScore, type Score } from '../engine/usi';
 import { applyMove } from '../shogi/move';
 import { parseSfen, positionKey } from '../shogi/sfen';
@@ -6,11 +6,12 @@ import type { Position } from '../shogi/types';
 import type { Problem } from './problem';
 
 /**
- * 玉方の探索時間（攻方が指した後の、問題の残り手数ごと）。これ以内に詰みが見つからなければ詰みを逃したとみなす。
+ * 玉方の探索時間（攻方が指した後の、問題の残り手数ごと）。詰み専用エンジンの判定も、この時間で打ち切る。
  * 詰みがあればエンジンはたいてい見つけた時点で返すが、無ければ時間いっぱい考える。
  * その差で正誤が分からないよう、画面側は応手を見せるまでの時間をこの値にそろえる。
  */
 export function defenderMovetimeMs(remainingPlies: number): number {
+  // 正誤は詰み専用エンジンで判定し、結論が出なかったときだけ mini の探索結果（score mate）を使う。
   // 計測（PC の Node、mini）: 詰みが見つかるまでの最大は残り4手まで約50ms、6手で約300ms。
   // 残り8・10手はこの時間では見落としがある（4スレッドで残り10手の約1割。docs/engine-tuning.md）。
   // スマホは数倍遅いので、その分を見込む。時間内に見落としても、たいてい猶予に入り次の手で取り消される
@@ -18,6 +19,27 @@ export function defenderMovetimeMs(remainingPlies: number): number {
   if (remainingPlies <= 6) return 500;
   if (remainingPlies <= 8) return 1000;
   return 1500;
+}
+
+/**
+ * 攻方の手の後の局面で、玉方の応手ごとに詰むかを詰み専用エンジンで調べる。
+ * 詰まない応手が見つかっても、mini の最善手が詰まない応手かを知るため最後まで調べる。
+ * budgetMs を使い切ったら、残りの応手は unknown。
+ */
+export async function judgeReplies(
+  solver: MateSolverLike,
+  pos: EnginePosition,
+  replies: readonly string[],
+  budgetMs: number,
+): Promise<Map<string, MateVerdict>> {
+  const deadline = performance.now() + budgetMs;
+  const verdicts = new Map<string, MateVerdict>();
+  for (const reply of replies) {
+    const left = deadline - performance.now();
+    const verdict = left > 0 ? await solver.solve({ sfen: pos.sfen, moves: [...pos.moves, reply] }, left) : 'unknown';
+    verdicts.set(reply, verdict);
+  }
+  return verdicts;
 }
 
 /** 詰みを逃した後に続けさせる最大の手数（攻方の手） */
@@ -63,6 +85,8 @@ export type SessionState =
   | { kind: 'failure'; reason: FailureReason; missedAt?: number };
 
 export interface SessionOptions {
+  /** 詰み専用エンジン。無ければ mini の探索結果だけで判定する */
+  mateSolver?: MateSolverLike;
   /** 残り手数ごとの玉方の探索時間 */
   movetimeMs?: (remainingPlies: number) => number;
   /** 0以上1未満の乱数（テスト用に差し替える） */
@@ -75,9 +99,13 @@ export interface SessionOptions {
  * 判定ルール:
  *   - 攻方は王手しか指せない（checks の中から選ぶ）
  *   - 攻方の手の後、玉方に合法手が無ければ成功（遠回りでも成功）
- *   - 玉方の探索が「詰まされる」(score mate -N) なら最善手で応じて続行
- *   - 通常評価値・時間切れなら詰みを逃した。ただしすぐには不正解にせず、評価値に応じて
- *     0〜2手は玉方が最善手で応じて続ける（猶予）。猶予を使い切ったら不正解
+ *   - 詰みが続くか: 詰み専用エンジンで玉方の応手ごとに調べる（手数の上限なし。遠回りの詰みも詰み）。
+ *     すべての応手で詰めば続行、1つでも詰まなければ詰みを逃した。
+ *     結論が出なかったとき（時間切れ・メモリ不足）と、詰み専用エンジンが無いときは、
+ *     玉方の探索（mini）が「詰まされる」(score mate -N) かで決める
+ *   - 玉方の応手は mini の最善手。ただし詰みを逃したときは、詰まないと分かった応手から選ぶ
+ *   - 詰みを逃しても、すぐには不正解にせず、mini の評価値に応じて
+ *     0〜2手は玉方が応じて続ける（猶予）。猶予を使い切ったら不正解
  *   - 猶予中に本当に詰ませれば成功。猶予中に再び詰みが見つかれば（探索の見落としだった）猶予を取り消して続行
  *   - 同一局面が4回現れたら連続王手の千日手として不正解
  */
@@ -88,6 +116,7 @@ export class Session {
   private readonly seen = new Map<string, number>();
   private readonly movetimeMs: (remainingPlies: number) => number;
   private readonly random: () => number;
+  private readonly mateSolver: MateSolverLike | undefined;
   /** 詰みを逃した手（1始まり）。逃していなければ null */
   private missedAt: number | null = null;
   /** 詰みを逃した後に、あと何手続けさせるか */
@@ -100,6 +129,7 @@ export class Session {
   ) {
     this.movetimeMs = options.movetimeMs ?? defenderMovetimeMs;
     this.random = options.random ?? Math.random;
+    this.mateSolver = options.mateSolver;
     this.position = parseSfen(problem.sfen);
     this.remember();
   }
@@ -134,8 +164,14 @@ export class Session {
     const legal = await this.engine.legalMoves(this.enginePosition);
     if (legal.length === 0) return (this.state = { kind: 'success', moves: this.moves.length });
 
-    const result = await this.engine.think(this.enginePosition, movetime);
-    if (isMatedScore(result.score)) {
+    const pos = this.enginePosition;
+    const [result, verdicts] = await Promise.all([
+      this.engine.think(pos, movetime),
+      this.mateSolver ? judgeReplies(this.mateSolver, pos, legal, movetime) : null,
+    ]);
+    const escapes = verdicts ? legal.filter((m) => verdicts.get(m) === 'nomate') : [];
+    const decided = verdicts && (escapes.length > 0 || legal.every((m) => verdicts.get(m) === 'mate'));
+    if (decided ? escapes.length === 0 : isMatedScore(result.score)) {
       // 猶予中に詰みが見つかったなら、前の判定は探索の見落としだった
       this.missedAt = null;
       this.graceLeft = 0;
@@ -152,6 +188,8 @@ export class Session {
     let reply = result.bestmove;
     if (reply === 'win') return this.fail('defender-win');
     // 詰みを読んでいても resign を返すことがある（ResignValue 等）。その場合は合法手から1つ選ぶ。
+    // 詰みを逃したなら、詰まないと分かった応手で応じる（mini は王手以外の手を含む詰みを読むことがある）
+    if (escapes.length && !escapes.includes(reply)) reply = escapes[0];
     if (!legal.includes(reply)) reply = legal[0];
     this.push(reply);
     onDefenderMove?.(reply);

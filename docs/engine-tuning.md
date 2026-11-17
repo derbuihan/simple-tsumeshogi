@@ -82,28 +82,69 @@
 
 ### ビルドのしかた
 
-公式の Makefile がそのまま使える。ソースは `npm run prepare:mate-engine` で取得したもの（`.cache/research/YaneuraOu`、コミット `2bc64b4`）を、ネイティブ版を消さないよう別の場所にコピーしてビルドした。
+公式の Makefile がそのまま使える。`engine/build.sh mate`（`npm run build:engine -- mate`）にまとめた。
+ソースは `npm run prepare:mate-engine` で取得したもの（`.cache/research/YaneuraOu`、コミット `2bc64b4`）を、ネイティブ版を消さないよう `engine/build/mate` にコピーし、パッチを当ててビルドする。
 
 ```bash
-git clone --depth 1 https://github.com/emscripten-core/emsdk.git .cache/emsdk
-.cache/emsdk/emsdk install 3.1.43 && .cache/emsdk/emsdk activate 3.1.43
-mkdir -p .cache/mate-wasm/out && cp -r .cache/research/YaneuraOu/source .cache/mate-wasm/source
-patch -d .cache/mate-wasm -p1 < docs/engine-tuning/mate-engine-wasm.patch
-cp public/engine/package.json .cache/mate-wasm/out/   # Node で require するため（CommonJS）
-cd .cache/mate-wasm/source && source ../../emsdk/emsdk_env.sh
-make -j8 clean tournament COMPILER=em++ TARGET_CPU=WASM YANEURAOU_EDITION=YANEURAOU_MATE_ENGINE TARGET=../out/yaneuraou.mate.js
+npm run prepare:mate-engine        # 公式ソースの取得（ネイティブ版のビルドも行う）
+npm run build:engine -- mate       # public/engine/yaneuraou.mate.{js,wasm,worker.js}
 ```
 
-- できるのは `yaneuraou.mate.{js,wasm,worker.js}`。wasm は約600KB で、評価関数ファイルは要らない。
-- パッチ（`docs/engine-tuning/mate-engine-wasm.patch`）は2行だけ。
+- wasm は約600KB で、評価関数ファイルは要らない。
+- パッチ（`engine/mate-engine-wasm.patch`）は2行だけ。
   - 探索の終了を100msごとに確かめていたのを1msごとにした。そのままだと、すぐ解ける局面でも1回に最低100msかかる。
   - 1ms 未満で解けると速度の計算が0で割るので、それを避けた（WASM では例外で止まる）。
+- 公式の既定から2つ変えている。
+  - 前もって作るスレッドの数（`PTHREAD_POOL_SIZE`）を32から4に。そのままだとブラウザで Worker を32個作る。
+  - 書き出し名（`EXPORT_NAME`）を `YaneuraOuMate` に。mini と同じ `YaneuraOu` だと、ブラウザで両方を読み込めない。
 - ⚠ 一部のファイルだけを `make normal` でビルドし直すと、`tournament` でビルドした残りと設定が食い違い、`go mate` が応答しなくなった。必ず `clean tournament` でビルドし直すこと。
 - エンジンの既定値は `Threads 4`・`USI_Hash 1024` なので、使うときは必ず設定し直す。
+
+## 結果3：手数の上限をなくす（遠回りの詰みも詰み）
+
+アプリでは、最短でなくても詰めば成功にしている。結果2は `DepthLimit` を残り手数ちょうどにしていたので、遠回りの詰みを「詰まない」と判定していた。
+そこで上限をゆるめて測り直した（`mate-bench.mjs` の最後の引数。`none` が上限なし、`+N` が残り手数 + N 手まで）。
+正しい手（600局面）は、どの設定でも全件を詰みと判定し、最大でも約70msだった。違いが出たのは間違った王手（398件）。
+
+| 手数の上限（置換表） | 遠回りで詰む | 詰まない | 判定できず（`none`） | 詰まないと分かるまで：中央値 / 95% / 最大 |
+|---|---|---|---|---|
+| 残り手数ちょうど（64MB） | 26 | 371 | 1 | 5 / 50 / 420ms |
+| +2手（64MB） | 53 | 334 | 11 | 9 / 201 / 451ms |
+| +4手（64MB） | 81 | 301 | 16 | 13 / 370 / 492ms |
+| +8手（64MB） | 100 | 246 | 52 | 30 / 444 / 618ms |
+| +16手（64MB） | 112 | 218 | 68 | 37 / 474 / 622ms |
+| 上限なし（16MB） | 110 | 177 | 111 | 41 / 131 / 323ms |
+| 上限なし（64MB） | 113 | 215 | 70 | 37 / 476 / 1516ms |
+| 上限なし（256MB） | 117 | 238 | 43 | 36 / 1812 / 3472ms |
+
+- 時間切れ（`timeout`、上限6秒）は1件もなかった。結論が出ないのは、どれもメモリ不足（`none`）。
+- 上限付きの `nomate` は「その手数では詰まない」というだけで、もっと長い詰みが残っているかもしれない。遠回りでも成功という決まりと合うのは、上限なしだけ。
+
+### 今の mini（4スレッド）との比較
+
+同じ間違った王手の後を、mini で6秒まで探索した（`docs/engine-tuning/mini-wrong.mjs`。問題を5つに分けて並列に回した）。
+「時間内」は今の考える時間（間違った王手の後は残り8・10手なので1000・1500ms）。
+
+| 詰み専用エンジン（上限なし・64MB） | 件数 | mini が時間内に詰みと判定 | mini が6秒以内に詰みと判定 | mini が6秒でも見つけられない |
+|---|---|---|---|---|
+| 詰む（遠回り） | 113 | 32 | +27 | 54 |
+| 詰まない（`nomate`） | 215 | 1 | +1 | 213 |
+| 判定できず（`none`） | 70 | 0 | +1 | 69 |
+
+- **遠回りの詰みの7割（113件中81件）を、mini は時間内に見落としていた。** mini が見つけた詰みは8〜24手。
+- **`none` の局面は、mini でもほぼ詰みを見つけられない。** `none` を mini に任せても、今より悪くならない。
+- 詰み専用エンジンが「詰まない」とした局面で、mini が詰みと読んだものが2件あった。王手でない手を含む詰みを読んだものとみられる（中身は未確認）。王手だけで詰ませる決まりでは、詰み専用エンジンの判定が正しい。
 
 ## 決めたこと
 
 - **mini を4スレッドにした**（`src/engine/EngineClient.ts`）。前もって作っておくスレッドの数（`PTHREAD_POOL_SIZE=4`、`engine/build.sh`）の範囲に収まる。ヘッドレス Chrome で11手詰を3問指し、応手が返ることを確かめた。スマホでは、電池の減りや発熱が増えるかもしれない。
 - **置換表は16MBのまま**にした。大きくしても効果が見えなかったため。
 - **考える時間は変えない。** 延ばして判定が良くなるのは9・11手詰の序盤だけで、そこは演出で待ち時間を隠せる長さではない。
-- **次は、正誤の判定を詰み専用エンジンに置き換える。** そうなれば mini は玉方の応手を選ぶだけになり、考える時間を手数で分ける必要もなくなる見込み。
+- **正誤の判定を詰み専用エンジンに置き換えた**（`src/engine/MateClient.ts`、`src/game/session.ts`）。
+  - 攻方が指したら、mini の探索と、詰み専用エンジンでの応手ごとの判定を同時に始める。持ち時間はどちらも今までの考える時間（`defenderMovetimeMs`）で、待ち時間は変わらない。
+  - 詰み専用エンジンは `Threads 1`・`USI_Hash 64`・`DepthLimit 0`（上限なし）。256MB は `none` が減るが、詰まないと分かるまで最大3.5秒かかる。
+  - すべての応手で詰めば続行。1つでも詰まなければ詰みを逃した。結論が出なければ（時間切れ・`none`）、今までどおり mini の `score mate` で決める。
+  - 詰まない応手が見つかっても、mini の最善手が詰まない応手かを知るため、持ち時間の中で残りの応手も調べる。
+  - 玉方の応手は mini の最善手。ただし詰みを逃したときに、mini の最善手が詰む応手なら、詰まないと分かった応手で応じる。猶予の長さは今までどおり mini の評価値で決める。
+  - 詰み専用エンジンを読み込めなければ、mini だけで判定する（コンソールにエラーを出す）。
+  - ヘッドレス Chrome で、2つのエンジンを同時に読み込めること（約400ms）と、3・7・11手詰の7問を収録解どおりに指して続くことを確かめた。

@@ -8,7 +8,8 @@
 
 - PC・スマートフォン対応の1画面UI（TypeScript + Vite、フレームワークなし）
 - 問題：3・5・7・9・11手詰 約500万問
-- 玉方・詰み判定：やねうら王 + つようら王11mini（設定で11micro）
+- 玉方：やねうら王 + つようら王11mini（設定で11micro）
+- 詰み判定：やねうら王の詰将棋エンジン版（df-pn）。結論が出ないときは mini で判定（[docs/engine-tuning.md](docs/engine-tuning.md)）
 - 配信：Cloudflare Workers（静的アセット）+ Access、問題データ：R2、履歴：Workers KV
 
 ## セットアップ
@@ -61,6 +62,7 @@ npm run upload:problems -- --missing   # R2 に無いファイルだけアップ
 git clone --depth 1 https://github.com/emscripten-core/emsdk.git .cache/emsdk
 .cache/emsdk/emsdk install 3.1.43 && .cache/emsdk/emsdk activate 3.1.43
 npm run build:engine -- mini      # micro も同様
+npm run prepare:mate-engine && npm run build:engine -- mate   # 詰み専用エンジン
 npm run smoke:engine -- mini 3 2000
 ```
 

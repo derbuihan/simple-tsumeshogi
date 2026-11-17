@@ -1,4 +1,5 @@
 import { EngineClient } from './engine/EngineClient';
+import { MateClient } from './engine/MateClient';
 import type { Problem } from './game/problem';
 import { successFeats, type Feat } from './game/feats';
 import { Session, type FailureReason } from './game/session';
@@ -56,6 +57,8 @@ const SYNC_LABEL = { synced: '履歴は同期済み', pending: '履歴を同期�
 
 export class App {
   private engine: EngineClient | null = null;
+  /** 詰み専用エンジン（正誤の判定）。読み込めなければ null のまま、mini だけで判定する */
+  private mateSolver: MateClient | null = null;
   private problem: Problem | null = null;
   private session: Session | null = null;
   /** 最後に終わった挑戦の手順（解答再生の「自分の手順」） */
@@ -157,13 +160,17 @@ export class App {
     this.render();
     const enginePromise = EngineClient.create(this.settings.variant);
     enginePromise.catch(() => undefined);
+    const matePromise = MateClient.create().catch((e) => {
+      console.error('詰み専用エンジンを読み込めませんでした。mini だけで判定します', e);
+      return null;
+    });
     try {
       // 履歴が取れなくても出題は続ける（オフライン時は端末内の履歴を使う）
       await Promise.race([this.history.sync(), new Promise((r) => setTimeout(r, 3000))]);
       await this.loadProblem();
       this.phase = { kind: 'loading', message: '将棋エンジンを読み込み中…' };
       this.render();
-      this.engine = await enginePromise;
+      [this.engine, this.mateSolver] = await Promise.all([enginePromise, matePromise]);
       await this.beginAttempt();
     } catch (e) {
       this.fail(e);
@@ -194,7 +201,7 @@ export class App {
   private async beginAttempt(): Promise<void> {
     if (!this.problem || !this.engine) return;
     this.selection = null;
-    this.session = new Session(this.problem, this.engine);
+    this.session = new Session(this.problem, this.engine, { mateSolver: this.mateSolver ?? undefined });
     this.phase = { kind: 'playing', thinking: true };
     this.render();
     const state = await this.session.start();

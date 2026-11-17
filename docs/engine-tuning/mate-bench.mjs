@@ -1,13 +1,14 @@
-// 詰み専用エンジン（WASM）で「攻方が指した後の局面が N 手以内に詰むか」を判定する時間を測る。
-// 玉方の合法手（mini エンジンの moves）ごとに、攻方の手番から go mate（DepthLimit = 残り手数 - 1）を調べ、
+// 詰み専用エンジン（WASM、public/engine）で「攻方が指した後の局面が N 手以内に詰むか」を判定する時間を測る。
+// 玉方の合法手（mini エンジンの moves）ごとに、攻方の手番から go mate（DepthLimit = 残り手数 - 1、または上限なし）を調べ、
 // すべての応手で詰めば詰み、1つでも詰まなければ不詰（そこで打ち切る）。
 // mini-tune.mjs と同じ局面に加え、収録解の初手以外の王手（誤答）も調べる。
 //
-// 使い方（リポジトリ直下で。詰み専用エンジンを .cache/mate-wasm/out にビルドしておく。docs/engine-tuning.md 参照）:
-//   node docs/engine-tuning/mate-bench.mjs "$PWD" <問題数> <出力.json> [USI_Hash(MB)=64]
+// 使い方（リポジトリ直下で。詰み専用エンジンを engine/build.sh mate でビルドしておく）:
+//   node docs/engine-tuning/mate-bench.mjs "$PWD" <問題数> <出力.json> [USI_Hash(MB)=64] [手数の上限=limit|none|+N]
+//   none: DepthLimit 0（上限なし）。+N: 残り手数 + N 手まで（遠回りの詰みも詰みとみなすときの判定）
 setInterval(() => {}, 1000);
 import fs from 'node:fs'; import path from 'node:path'; import { createRequire } from 'node:module';
-const [ROOT, N, OUT, HASH = '64'] = process.argv.slice(2);
+const [ROOT, N, OUT, HASH = '64', DEPTH = 'limit'] = process.argv.slice(2);
 const CAP = 6000;
 const require = createRequire(import.meta.url);
 async function boot(dir, js, wasm, evalDir) {
@@ -22,7 +23,7 @@ async function boot(dir, js, wasm, evalDir) {
 const mini = await boot(path.join(ROOT, 'public/engine'), 'yaneuraou.mini.js', 'yaneuraou.mini.wasm', path.join(ROOT, 'public/engine/eval/mini'));
 for (const c of ['Threads value 1', 'USI_Hash value 16', 'EvalDir value /eval']) mini.send(`setoption name ${c}`);
 await mini.ask('isready', (l) => l === 'readyok');
-const mate = await boot(path.join(ROOT, '.cache/mate-wasm/out'), 'yaneuraou.mate.js', 'yaneuraou.mate.wasm');
+const mate = await boot(path.join(ROOT, 'public/engine'), 'yaneuraou.mate.js', 'yaneuraou.mate.wasm');
 for (const c of ['Threads value 1', `USI_Hash value ${HASH}`, 'PvInterval value 0']) mate.send(`setoption name ${c}`);
 await mate.ask('isready', (l) => l === 'readyok');
 const line = async (pos, cmd) => { mini.send(pos); const [l] = await mini.ask(cmd, () => true); return l.trim().split(/\s+/).filter(Boolean); };
@@ -33,7 +34,8 @@ async function judge(sfen, moves, remaining) {
   const replies = await line(base, 'moves');
   const t = performance.now();
   if (replies.length === 0) return { mate: true, ms: 0, replies: 0 };
-  mate.send(`setoption name DepthLimit value ${remaining - 1}`);
+  const extra = DEPTH === 'limit' ? 0 : Number(DEPTH);
+  mate.send(`setoption name DepthLimit value ${DEPTH === 'none' ? 0 : remaining - 1 + extra}`);
   for (const r of replies) {
     mate.send(`${base} ${r}`);
     const left = Math.max(1, CAP - (performance.now() - t));
