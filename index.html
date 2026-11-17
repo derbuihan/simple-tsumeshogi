@@ -10,6 +10,17 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="preload" href="/fonts/noto-serif-jp-pieces.woff2" as="font" type="font/woff2" crossorigin />
     <title>実戦詰将棋</title>
+    <script>
+      // 見張り: Service Worker がキャッシュから返したページで、アプリが起動しなかったときの逃げ道。
+      // キャッシュのページを消してネットから読み込み直す（1回だけ）。'app-v1' と '/' は public/sw.js の APP_CACHE と PAGE
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        setTimeout(function () {
+          if (window.__started || sessionStorage.getItem('tsume.pageRetry')) return;
+          sessionStorage.setItem('tsume.pageRetry', '1');
+          caches.open('app-v1').then(function (c) { return c.delete('/'); }).finally(function () { location.reload(); });
+        }, 8000);
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

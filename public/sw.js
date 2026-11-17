@@ -1,15 +1,16 @@
 // Service Worker。ホーム画面に追加したアプリの2回目以降の起動を速くする（エンジン約7MBを毎回取りに行かない）。
 //
 // キャッシュの方針（同じオリジンの GET だけを扱う。/api/* と /__dev/* は素通しする）
-//   ページ（index.html）       : 扱わない（常にネットから。下の ⚠ を参照）
+//   ページ（/）                : キャッシュがあればすぐ返し、裏で新しい版を取り直す。起動画面を短くし、電波がなくても起動できる。
+//                                新しい版は、それが指す JS・CSS をキャッシュに入れ終えてから差し替える（updatePage）。
+//                                そのため更新が見えるのは、デプロイ後の次の次の起動から
 //   /assets/*（名前にハッシュ）: キャッシュ優先（中身が変われば名前が変わる）
 //   /engine/*（約7MB × 2種）   : キャッシュ優先。エンジンや評価関数を入れ替えたら ENGINE_CACHE の版を上げる
 //   /problems/*（問題データ）  : キャッシュ優先（問題は書き換えない）
 //   それ以外（索引・アイコン等）: キャッシュがあればすぐ返し、裏でネットから取り直す（stale-while-revalidate）
 //
-// ⚠ ページをキャッシュから返すと、Chrome で2回目以降の起動時に JS・CSS の読み込みが終わらず
-//   真っ白になることがあった（原因は未特定。docs/TODO.md の「オフラインで起動できるようにする」）。
-//   そのため電波がないときの起動には対応していない。
+// ⚠ ページをキャッシュから返すと、headless Chrome では2回目以降の起動が真っ白になることがあった（実機では未確認）。
+//   キャッシュのページでアプリが起動しなければ、index.html の見張りがキャッシュのページを消して読み込み直す。
 //
 // ⚠ 応答の本体は必ず最後まで読まれるようにする（clone した片方を読まずに捨てない）。
 
@@ -17,6 +18,8 @@ const APP_CACHE = 'app-v1';
 const ENGINE_CACHE = 'engine-v1';
 const PROBLEM_CACHE = 'problems-v1';
 const CACHES = [APP_CACHE, ENGINE_CACHE, PROBLEM_CACHE];
+/** キャッシュするページ（start_url）。index.html の見張りもこのキーを消す */
+const PAGE = '/';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(APP_CACHE).then((c) => c.addAll(['/manifest.webmanifest'])).then(() => self.skipWaiting()));
@@ -42,9 +45,13 @@ function routeFor(path) {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET' || req.mode === 'navigate') return;
+  if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (req.mode === 'navigate') {
+    if (url.pathname === PAGE) servePage(event);
+    return;
+  }
   const route = routeFor(url.pathname);
   if (!route) return;
   // 応答を返した後もキャッシュへの書き込みや取り直しが終わるまで Service Worker を止めさせない。
@@ -64,7 +71,7 @@ self.addEventListener('message', (event) => {
   for (const u of event.data.urls) {
     const url = new URL(u, self.location.origin);
     const route = url.origin === self.location.origin ? routeFor(url.pathname) : null;
-    if (!route || url.pathname === '/') continue;
+    if (!route || url.pathname === PAGE) continue;
     const key = url.href;
     jobs.push(
       caches
@@ -77,8 +84,39 @@ self.addEventListener('message', (event) => {
         .catch(() => undefined),
     );
   }
+  jobs.push(updatePage().catch(() => undefined));
   event.waitUntil(Promise.all(jobs));
 });
+
+/** ページ。キャッシュがあればすぐ返し、裏で取り直す。無ければ（初回）ブラウザに普通に読み込ませ、裏でキャッシュする */
+function servePage(event) {
+  event.waitUntil(updatePage().catch(() => undefined));
+  event.respondWith(
+    caches
+      .open(APP_CACHE)
+      .then((c) => c.match(PAGE))
+      .then((hit) => hit ?? fetch(event.request)),
+  );
+}
+
+/**
+ * ネットから最新のページを取り、それが指す JS・CSS（/assets/*）をキャッシュに入れ終えてから、ページを差し替える。
+ * 途中で失敗したら差し替えない（キャッシュのページが、キャッシュに無い JS・CSS を指すことが無いように）
+ */
+async function updatePage() {
+  const res = await fetch(PAGE, { cache: 'no-cache' });
+  if (!res.ok || res.redirected) return;
+  const html = await res.text();
+  const cache = await caches.open(APP_CACHE);
+  for (const [, asset] of html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)) {
+    if (await cache.match(asset)) continue;
+    const r = await fetch(asset);
+    if (!r.ok) return;
+    await cache.put(asset, r);
+  }
+  // COOP/COEP などのヘッダーもそのまま残す（無いと SharedArrayBuffer が使えずエンジンが動かない）
+  await cache.put(PAGE, new Response(html, { status: res.status, statusText: res.statusText, headers: res.headers }));
+}
 
 async function store(name, key, res) {
   try {

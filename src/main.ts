@@ -3,6 +3,9 @@ import { App } from './app';
 import { HistoryStore } from './history/store';
 import { loadSettings } from './settings';
 
+// index.html の見張りに、アプリの JS が動き出したことを知らせる
+(window as unknown as { __started: boolean }).__started = true;
+
 const root = document.querySelector<HTMLDivElement>('#app')!;
 const app = new App(root, loadSettings(), new HistoryStore());
 const started = app.start();
