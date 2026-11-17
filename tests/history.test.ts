@@ -68,7 +68,7 @@ describe('selectProblem', () => {
     mate3: { moves: 3, volumes: [2, 2] },
     mate5: { moves: 5, volumes: [3] },
   };
-  const cursor = { next: {}, lengthIndex: 0 };
+  const cursor = {};
   const seq = (...xs: number[]) => {
     let i = 0;
     return () => xs[i++ % xs.length];
@@ -104,22 +104,6 @@ describe('selectProblem', () => {
     expect(r.fallback).toBeDefined();
   });
 
-  it('番号順: 手数を交互に、巻をまたいで進む', () => {
-    let c = cursor;
-    const ids: string[] = [];
-    for (let i = 0; i < 8; i++) {
-      const r = selectProblem({ index, lengths: [3, 5], order: 'sequential', records: {}, cursor: c });
-      ids.push(r.id);
-      c = r.cursor;
-    }
-    expect(ids).toEqual([
-      'mate3/000/0', 'mate5/000/0',
-      'mate3/000/1', 'mate5/000/1',
-      'mate3/001/0', 'mate5/000/2',
-      'mate3/001/1', 'mate5/000/0',
-    ]);
-  });
-
   it('ランダム: 今の巻の中から選ぶ', () => {
     const r = selectProblem({ index, lengths: [5], order: 'random', records: {}, cursor, random: seq(0, 0.5) });
     expect(r.id).toMatch(/^mate5\/000\//);
@@ -131,7 +115,7 @@ describe('selectProblem', () => {
     const records: Records = {};
     for (let i = 0; i < 499; i++) applyEvent(records, ev(`mate3/001/${i}`, 'fail'));
     applyEvent(records, ev('mate3/000/0', 'fail'));
-    const c = { next: {}, lengthIndex: 0, current: { mate3: 1 } };
+    const c = { current: { mate3: 1 } };
     for (let k = 0; k < 20; k++) {
       const r = selectProblem({ index: big, lengths: [3], order: 'untried', records, cursor: c });
       expect(r.id).toMatch(/^mate3\/001\//);

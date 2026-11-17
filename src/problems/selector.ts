@@ -115,18 +115,5 @@ export function selectProblem(input: SelectInput): SelectResult {
     }
     case 'random':
       return { id: fromCurrentVolume(false) ?? randomAnywhere(), cursor };
-    case 'sequential': {
-      const length = lengths[cursor.lengthIndex % lengths.length];
-      const vols = index[`mate${length}`].volumes;
-      let { volume, line } = cursor.next[`mate${length}`] ?? { volume: 0, line: 0 };
-      if (volume >= vols.length) volume = 0;
-      if (line >= vols[volume]) [volume, line] = [(volume + 1) % vols.length, 0];
-      const id = problemId(length, volume, line);
-      const nextLine = line + 1 >= vols[volume] ? { volume: (volume + 1) % vols.length, line: 0 } : { volume, line: line + 1 };
-      return {
-        id,
-        cursor: { ...cursor, next: { ...cursor.next, [`mate${length}`]: nextLine }, lengthIndex: (cursor.lengthIndex + 1) % lengths.length },
-      };
-    }
   }
 }
