@@ -10,7 +10,7 @@
 - 問題：3・5・7・9・11手詰 約500万問
 - 玉方：やねうら王 + つようら王11mini（設定で11micro）
 - 詰み判定：やねうら王の詰将棋エンジン版（df-pn）。結論が出ないときは mini で判定（[docs/engine-tuning.md](docs/engine-tuning.md)）
-- 配信：Cloudflare Workers（静的アセット、独自ドメイン `tsumeshogi.houchishoujo.com`）、問題データ：R2、履歴：Workers KV
+- 配信：Cloudflare Workers（静的アセット、独自ドメイン `tsumeshogi.houchishoujo.com`）、問題データ：R2、履歴：D1
 
 ## セットアップ
 
@@ -78,8 +78,9 @@ npm run fetch:eval       # つようら王11mini/micro を取得
 |---|---|
 | `engine/YaneuraOu` | やねうら王（submodule: [derbuihan/YaneuraOu](https://github.com/derbuihan/YaneuraOu) の `tsumeshogi-wasm` ブランチ。王手だけを列挙する USI 拡張コマンド `checks` を追加） |
 | `engine/build.sh` | WASM ビルド |
-| `cloudflare.config.ts` | Worker の設定（KV `HISTORY`、R2 `PROBLEMS`、静的アセット） |
+| `cloudflare.config.ts` | Worker の設定（D1 `HISTORY`、R2 `PROBLEMS`、静的アセット、独自ドメイン） |
 | `worker/index.ts` | Worker 本体（`/api/history` と `/problems/*`） |
+| `migrations/` | D1（履歴）のテーブル定義。`npx cf d1 migrations apply <データベース ID>`（ローカルは `--local`）で適用 |
 | `public/engine/` | ビルド済みエンジンと評価関数 |
 | `.cache/minimal-hand/public/data/` | 問題データの正本（`mate{3,5,7,9,11}/NNN.txt`、1行1問：`<SFEN> moves <手順>`）。攻方の持ち駒を最低限にしたもの。Git 管理外。R2 にアップロードして配信 |
 | `.cache/shogimate/public/data/` | 正本を作り直すときだけ取得する元データ（形式は同じ）。Git 管理外 |

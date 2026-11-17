@@ -16,8 +16,8 @@ export default defineConfig({
       runWorkerFirst: ['/api/*', '/problems/*', '/__dev/*'],
     },
     env: {
-      // 解答履歴（KV namespace: simple-tsumeshogi-history）
-      HISTORY: bindings.kv({ id: 'be6208de555c42ecb6c92c69beb81c61' }),
+      // 解答履歴（D1: simple-tsumeshogi-history。表は migrations/ を cf d1 migrations apply で作る）
+      HISTORY: bindings.d1({ id: 'ab9dab8a-1b3d-4727-9f05-26a94b1f579b' }),
       // 問題データ（.cache/minimal-hand/public/data を scripts/upload-problems.sh でアップロード）
       PROBLEMS: bindings.r2({ name: 'simple-tsumeshogi-problems' }),
       // 履歴の書き込み（POST）を IP ごとに60秒30回まで（上限は拠点ごとの概算）

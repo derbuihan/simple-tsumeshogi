@@ -1,11 +1,11 @@
 /**
  * Cloudflare Worker（静的アセット付き）。
- *   /api/history     … 解答履歴（Workers KV）
+ *   /api/history     … 解答履歴（D1）
  *   /problems/*.txt  … 問題データ（R2）。同一オリジンで返すので CORS/COEP の考慮が不要
  *   /__dev/problems  … 開発時（cf dev）だけ。POST で問題データをまとめてローカルの R2 に入れる（scripts/upload-problems-local.mjs）
  *   それ以外          … 静的アセット（Vite のビルド結果。_headers で COOP/COEP を付与）
  */
-import { handleHistory, type KVLike } from '../src/history/api';
+import { handleHistory, type D1Like } from '../src/history/api';
 
 /** R2 のうち使う部分 */
 interface R2ObjectBodyLike {
@@ -23,8 +23,9 @@ interface RateLimitLike {
 }
 
 export interface Env {
-  HISTORY: KVLike;
-  /** 履歴の書き込み（POST）を IP ごとに制限する。KV の書き込み枠（無料は1日1,000回）を使い切られないように */
+  /** 解答履歴（D1: history_events） */
+  HISTORY: D1Like;
+  /** 履歴の書き込み（POST）を IP ごとに制限する。D1 の書き込み枠（無料は1日10万行）を使い切られないように */
   HISTORY_WRITE_LIMITER: RateLimitLike;
   PROBLEMS: R2BucketLike;
   ASSETS: { fetch(request: Request): Promise<Response> };

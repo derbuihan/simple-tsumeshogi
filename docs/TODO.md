@@ -7,8 +7,10 @@
 - [x] 認証なしで公開しても困らないようにする（2026-11-17）
   - 公開は `tsumeshogi.houchishoujo.com` だけ（workers.dev は止めた）。ゾーンの既存ルール JapanOnlyAccess で日本国外はブロック。
   - ゾーンの Rate Limiting rule: `/api/*` を IP ごとに10秒10回まで（Free は10秒単位・1ルール・Path 条件のみ。ホスト名では絞れない）。
-  - Worker: 履歴の POST を IP ごとに60秒30回まで（Rate Limiting バインディング）、本文128KB 上限、入力の範囲検査、1人分は 20,000 問まで。
-  - 履歴は端末が作るランダムな UUID（localStorage `tsume.historyId`、ヘッダー `x-history-id`）ごとに KV へ保存。ID が無いと 400。
+  - Worker: 履歴の POST を IP ごとに60秒30回まで（Rate Limiting バインディング）、本文128KB 上限、入力の範囲検査。
+  - 履歴は端末が作るランダムな UUID（localStorage `tsume.historyId`、ヘッダー `x-history-id`）ごとに D1 へ保存。ID が無いと 400。
+  - 履歴は KV から D1 へ移した（2026-11-17）。KV は「1人分の履歴を1つの値にして、1問ごとに読んで書き戻す」設計で、1人が1日使っただけで書き込み枠（1日1,000回）の約25%を使い、履歴が大きくなると CPU 時間（無料は10ミリ秒）も足りなくなるため。
+    D1 には追記専用のイベントを1行ずつ入れ（`migrations/`、書き込み枠は1日10万行）、集計と差分同期（`?since=seq`）はクライアントが行う。
   - Workers ログを有効（サンプリング 0.2）。Free は枠に達すると止まるだけで課金されない。
   - 残り: 端末間の履歴同期（ID の引き継ぎ）、CSP、`ssh.houchishoujo.com` の Cloudflare Access（最後にやる）。
 - [ ] **履歴を別の端末に引き継ぐ**
