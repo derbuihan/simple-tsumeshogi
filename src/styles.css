@@ -384,6 +384,51 @@ button {
   border: 2px solid rgba(255, 248, 225, 0.95);
   box-shadow: 0 0 6px rgba(255, 236, 180, 0.7);
 }
+/* 詰み。玉のマスを赤く灯し、玉から波紋を広げ、盤の中央に「詰」の印を押す */
+.mate-glow {
+  position: absolute;
+  inset: -8%;
+  border-radius: 6px;
+  opacity: 0;
+  background: radial-gradient(circle, rgba(214, 48, 36, 0.55) 0 40%, rgba(214, 48, 36, 0) 75%);
+}
+.mate-ring {
+  border-color: rgba(230, 70, 50, 0.95);
+  box-shadow: 0 0 8px rgba(230, 70, 50, 0.6);
+}
+.board-ripple.mate > div {
+  background: radial-gradient(circle, rgba(230, 80, 60, 0) 70%, rgba(230, 80, 60, 0.45) 90%, rgba(230, 80, 60, 0) 100%);
+}
+.board-ripple.mate.rare > div {
+  background: radial-gradient(circle, rgba(255, 210, 90, 0) 66%, rgba(255, 210, 90, 0.7) 88%, rgba(255, 210, 90, 0) 100%);
+}
+.mate-stamp {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  width: calc(var(--cell) * 2.6);
+  height: calc(var(--cell) * 2.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: calc(var(--cell) * 0.12) solid rgba(196, 30, 24, 0.9);
+  border-radius: 50%;
+  color: rgba(196, 30, 24, 0.92);
+  background: rgba(255, 250, 238, 0.55);
+  font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
+  font-weight: 700;
+  font-size: calc(var(--cell) * 1.6);
+  line-height: 1;
+  opacity: 0;
+  box-shadow: 0 0 0 calc(var(--cell) * 0.05) rgba(255, 250, 238, 0.6);
+}
+.mate-stamp.rare {
+  border-color: #c99418;
+  color: #b07d0a;
+  background: rgba(255, 246, 210, 0.75);
+  box-shadow: 0 0 calc(var(--cell) * 0.5) rgba(255, 200, 70, 0.8);
+}
 .impact-chip {
   position: absolute;
   left: 50%;
@@ -628,6 +673,41 @@ button {
 }
 .tag.success {
   color: var(--ok);
+}
+/* 達成（本当に起きたことだけ）。珍しい達成は金色にして光らせる */
+.feats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.feat {
+  font-size: 0.85rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.feat.rare {
+  color: #7a5200;
+  background: linear-gradient(110deg, #f7d978 0%, #fff3c4 45%, #f7d978 55%, #f0c64e 100%);
+  background-size: 220% 100%;
+  animation: shine 1.4s ease-out 0.15s both;
+  box-shadow: 0 0 10px rgba(240, 190, 60, 0.55);
+}
+@keyframes shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+.result-card.rare {
+  box-shadow:
+    0 0 0 2px #e9bf4b,
+    0 8px 28px rgba(160, 110, 10, 0.35);
 }
 .tag.failure {
   color: var(--ng);

@@ -2,6 +2,7 @@ import { parseUsiMove } from '../shogi/move';
 import { pieceChar, pieceName } from '../shogi/notation';
 import { positionKey } from '../shogi/sfen';
 import { HAND_TYPES, opposite, type Color, type HandType, type Piece, type Position } from '../shogi/types';
+import type { LandSound } from './sound';
 import { detectStep, type Step } from './step';
 
 export type Selection = { kind: 'board'; index: number } | { kind: 'hand'; type: HandType } | null;
@@ -28,7 +29,18 @@ export interface BoardViewHandlers {
   onHand(color: Color, type: HandType): void;
   /** 振り返りで盤をタップした（-1: 左側＝戻る、+1: 右側＝進む） */
   onReplay(dir: -1 | 1): void;
+  /** 駒が盤に着地した瞬間（効果音を合わせる） */
+  onLand(sound: LandSound): void;
 }
+
+/**
+ * 着地の演出の強さ。
+ * - light: 玉方の応手・振り返り。駒が潰れてマスが光るだけ
+ * - normal: 自分の手。盤の揺れ・波紋・衝撃の輪・木くずまで
+ * - strong: 自分の手で駒を取る・成る。輪と木くずを増やす
+ * 攻方の手は必ず王手なので王手かどうかでは分けない。正誤が分かってしまうので、手の良し悪しでも分けない
+ */
+type ImpactLevel = 'light' | 'normal' | 'strong';
 
 /** 駒の要素。upright = 手前向き（攻方の駒・攻方の駒台） */
 function pieceHtml(p: Piece, upright: boolean, attrs = ''): string {
@@ -59,6 +71,8 @@ export class BoardView {
   private key = '';
   /** 駒を置き直すたびに増やす。古いアニメーションの続きを止めるのに使う */
   private generation = 0;
+  /** 今のアニメーションの駒が着地したら解決する */
+  private landing: Promise<void> = Promise.resolve();
 
   constructor(private readonly handlers: BoardViewHandlers) {
     this.el = document.createElement('div');
@@ -140,7 +154,13 @@ export class BoardView {
       this.renderPieces(model.position, model.bottom);
       this.renderHand(this.bottomHand, model.position, model.bottom, '攻方', true);
       this.renderHand(this.topHand, model.position, opposite(model.bottom), '玉方', false);
-      if (step) void this.animate(step, dropFrom, handBefore!);
+      if (step) {
+        let landed!: () => void;
+        this.landing = new Promise((r) => (landed = r));
+        void this.animate(step, dropFrom, handBefore!, landed).finally(landed);
+      } else {
+        this.landing = Promise.resolve();
+      }
     }
     this.renderMarks(model);
   }
@@ -199,7 +219,7 @@ export class BoardView {
    * 1手のアニメーション。駒を持ち上げて素早く運び、最後に加速して盤に打ちつける（ペチン）。
    * 成る手は運んでいる途中で裏返し、成駒の面で着地する。取った駒は指した側の駒台へ運ぶ。
    */
-  private async animate(step: Step, dropFrom: DOMRect | undefined, handBefore: Position['hands']['b']): Promise<void> {
+  private async animate(step: Step, dropFrom: DOMRect | undefined, handBefore: Position['hands']['b'], landed: () => void): Promise<void> {
     const gen = this.generation;
     const { move, mover, piece, captured } = step;
     const el = this.pieces.querySelector<HTMLElement>(`.pc[data-index="${move.to}"]`);
@@ -252,8 +272,12 @@ export class BoardView {
     if (gen !== this.generation) return;
 
     // 着手：盤に駒を打ちつけた手応え。振り返りで手順を送るときは控えめにする
-    if (this.model!.replay) this.softImpact(el);
-    else this.impact(el);
+    const replay = this.model!.replay;
+    const own = mover === this.model!.bottom;
+    this.handlers.onLand({ own, capture: !!captured, promote: !!promoting, drop: move.kind === 'drop', replay });
+    if (replay) this.softImpact(el);
+    else this.impact(el, !own ? 'light' : captured || promoting ? 'strong' : 'normal');
+    landed();
 
     if (victim) await this.carryToHand(victim, captured!, handTarget, flightMs);
   }
@@ -262,16 +286,29 @@ export class BoardView {
    * 着地の瞬間（対局中）。駒を大きく押しつぶして弾み返らせ、盤ごと沈ませて揺らし、置いたマスから光の波紋を盤全体に広げ、
    * マスを白く光らせて衝撃の輪を2重に広げ、木くずを四方に飛ばす
    */
-  private impact(el: HTMLElement): void {
+  private impact(el: HTMLElement, level: ImpactLevel): void {
+    const light = level === 'light';
     el.querySelector<HTMLElement>('.pc-face')!.animate(
-      [
-        { transform: 'scale(1.22, 0.74)' },
-        { transform: 'scale(0.92, 1.1)', offset: 0.35 },
-        { transform: 'scale(1.04, 0.97)', offset: 0.7 },
-        { transform: 'scale(1)' },
-      ],
-      { duration: 140, easing: 'cubic-bezier(.2,.7,.3,1)' },
+      light
+        ? [{ transform: 'scale(1.1, 0.88)' }, { transform: 'scale(0.97, 1.03)', offset: 0.45 }, { transform: 'scale(1)' }]
+        : [
+            { transform: 'scale(1.22, 0.74)' },
+            { transform: 'scale(0.92, 1.1)', offset: 0.35 },
+            { transform: 'scale(1.04, 0.97)', offset: 0.7 },
+            { transform: 'scale(1)' },
+          ],
+      { duration: light ? 110 : 140, easing: 'cubic-bezier(.2,.7,.3,1)' },
     );
+    const style = el.getAttribute('style') ?? '';
+    if (light) {
+      const fx = fragment(`<div class="impact-fx" style="${style}"><div class="impact-flash"></div></div>`);
+      this.pieces.insertBefore(fx, el);
+      void settle((fx.firstElementChild as HTMLElement).animate([{ opacity: 0.6 }, { opacity: 0 }], { duration: 150, easing: 'ease-out' })).then(() =>
+        fx.remove(),
+      );
+      return;
+    }
+    const strong = level === 'strong';
     const side = Math.random() < 0.5 ? -1 : 1;
     this.frame.animate(
       [
@@ -285,15 +322,16 @@ export class BoardView {
     );
 
     // 光と輪は駒の下に、木くずは駒の上に描く
-    const style = el.getAttribute('style') ?? '';
     const under = fragment(`<div class="impact-fx" style="${style}"><div class="impact-flash"></div></div>`);
     const over = fragment(`<div class="impact-fx over" style="${style}"></div>`);
     const flash = under.firstElementChild as HTMLElement;
     const anims: Animation[] = [flash.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 180, easing: 'ease-out' })];
-    for (const [delay, to] of [
+    const rings: [number, number][] = [
       [0, 1.9],
       [50, 2.5],
-    ] as const) {
+    ];
+    if (strong) rings.push([100, 3.2]);
+    for (const [delay, to] of rings) {
       const ring = document.createElement('div');
       ring.className = 'impact-ring';
       under.appendChild(ring);
@@ -308,10 +346,10 @@ export class BoardView {
       );
     }
     const cell = el.getBoundingClientRect().width;
-    const count = 10;
+    const count = strong ? 16 : 10;
     for (let i = 0; i < count; i++) {
       const angle = ((i + Math.random() * 0.6) / count) * Math.PI * 2;
-      const dist = cell * (0.75 + Math.random() * 0.5);
+      const dist = cell * (0.75 + Math.random() * 0.5) * (strong ? 1.25 : 1);
       const size = 2 + Math.random() * 3;
       const chip = document.createElement('div');
       chip.className = 'impact-chip';
@@ -330,7 +368,17 @@ export class BoardView {
       );
     }
 
-    // 盤全体への波紋。置いたマスを中心に光の輪が盤の端まで広がって消える
+    this.ripple(el, '', 420);
+    this.pieces.insertBefore(under, el);
+    this.pieces.appendChild(over);
+    void Promise.all(anims.map(settle)).then(() => {
+      under.remove();
+      over.remove();
+    });
+  }
+
+  /** 盤全体への波紋。駒のマスを中心に光の輪が盤の端まで広がって消える */
+  private ripple(el: HTMLElement, cls: string, ms: number): void {
     const board = this.pieces.getBoundingClientRect();
     const c = center(el.getBoundingClientRect());
     const cx = c.x - board.left;
@@ -342,26 +390,86 @@ export class BoardView {
       Math.hypot(board.width - cx, board.height - cy),
     );
     const ripple = fragment(
-      `<div class="board-ripple"><div style="left:${cx - radius}px;top:${cy - radius}px;width:${radius * 2}px;height:${radius * 2}px"></div></div>`,
+      `<div class="board-ripple ${cls}"><div style="left:${cx - radius}px;top:${cy - radius}px;width:${radius * 2}px;height:${radius * 2}px"></div></div>`,
     );
-    anims.push(
+    this.pieces.insertBefore(ripple, this.pieces.firstChild);
+    void settle(
       (ripple.firstElementChild as HTMLElement).animate(
         [
           { transform: 'scale(0.08)', opacity: 0.9 },
           { transform: 'scale(1)', opacity: 0 },
         ],
-        { duration: 420, easing: 'cubic-bezier(.2,.6,.4,1)' },
+        { duration: ms, easing: 'cubic-bezier(.2,.6,.4,1)' },
       ),
-    );
+    ).then(() => ripple.remove());
+  }
 
-    this.pieces.insertBefore(ripple, this.pieces.firstChild);
-    this.pieces.insertBefore(under, el);
-    this.pieces.appendChild(over);
-    void Promise.all(anims.map(settle)).then(() => {
-      ripple.remove();
-      under.remove();
-      over.remove();
-    });
+  /**
+   * 詰み。最後の手の着地で一瞬止め（ヒットストップ）、玉を沈ませて玉のマスを赤く灯し、
+   * 玉から波紋を広げてから「詰」の印を押す。onHit は玉が沈む瞬間（音を合わせる）。
+   * rare（珍しい達成）のときは印と波紋を金色にする。カードを出してよくなったら解決する。
+   */
+  async mate(rare: boolean, onHit: () => void): Promise<void> {
+    await this.landing;
+    const gen = this.generation;
+    const model = this.model;
+    if (!model) return;
+    const kingIndex = model.position.board.findIndex((p) => p?.type === 'K' && p.color !== model.bottom);
+    const king = this.pieces.querySelector<HTMLElement>(`.pc[data-index="${kingIndex}"]`);
+    if (reducedMotion() || !king) {
+      onHit();
+      return;
+    }
+    // ヒットストップ：着地の演出を潰れた瞬間で止める
+    const running = this.el.getAnimations({ subtree: true });
+    for (const a of running) a.pause();
+    await wait(110);
+    for (const a of running) if (a.playState === 'paused') a.play();
+    if (gen !== this.generation) return;
+
+    onHit();
+    king.querySelector<HTMLElement>('.pc-face')!.animate(
+      [
+        { transform: 'translate(0, 0) scale(1)' },
+        { transform: 'translate(-2px, 1px) scale(0.95)', offset: 0.12 },
+        { transform: 'translate(2px, 2px) scale(0.93)', offset: 0.26 },
+        { transform: 'translate(-1.5px, 2px) scale(0.93)', offset: 0.4 },
+        { transform: 'translate(1px, 2px) scale(0.94)', offset: 0.55 },
+        { transform: 'translate(0, 2px) scale(0.94)' },
+      ],
+      { duration: 380, easing: 'ease-out', fill: 'forwards' },
+    );
+    const glow = fragment(`<div class="impact-fx" style="${king.getAttribute('style')}"><div class="mate-glow"></div><div class="impact-ring mate-ring"></div></div>`);
+    this.pieces.insertBefore(glow, king);
+    const [g, ring] = [...glow.children] as HTMLElement[];
+    g.animate([{ opacity: 0 }, { opacity: 1, offset: 0.3 }, { opacity: 0.7 }], { duration: 500, easing: 'ease-out', fill: 'forwards' });
+    ring.animate(
+      [
+        { transform: 'scale(0.9)', opacity: 1 },
+        { transform: 'scale(3)', opacity: 0 },
+      ],
+      { duration: 480, easing: 'cubic-bezier(.1,.8,.3,1)' },
+    );
+    this.ripple(king, rare ? 'mate rare' : 'mate', 620);
+
+    await wait(220);
+    if (gen !== this.generation) return;
+    const stamp = fragment(`<div class="mate-stamp${rare ? ' rare' : ''}" aria-hidden="true"><span>詰</span></div>`);
+    this.pieces.appendChild(stamp);
+    void settle(
+      stamp.animate(
+        [
+          { transform: 'translate(-50%, -50%) rotate(-12deg) scale(2.4)', opacity: 0 },
+          { transform: 'translate(-50%, -50%) rotate(-8deg) scale(0.94)', opacity: 1, offset: 0.12 },
+          { transform: 'translate(-50%, -50%) rotate(-8deg) scale(1)', opacity: 1, offset: 0.2 },
+          { transform: 'translate(-50%, -50%) rotate(-8deg) scale(1)', opacity: 1, offset: 0.7 },
+          { transform: 'translate(-50%, -50%) rotate(-8deg) scale(1)', opacity: 0 },
+        ],
+        { duration: 1600, easing: 'cubic-bezier(.3,.7,.3,1)' },
+      ),
+    ).then(() => stamp.remove());
+    // 印が押されてから少し見せる
+    await wait(330);
   }
 
   /** 着地の瞬間（振り返り）。駒を一瞬押しつぶし、マスの枠を一瞬光らせるだけ */
@@ -445,5 +553,7 @@ function setFace(el: HTMLElement, p: Piece): void {
   el.querySelector('.pc-char')!.textContent = pieceChar(p);
   el.classList.toggle('promoted', p.promoted);
 }
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;

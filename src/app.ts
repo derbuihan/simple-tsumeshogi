@@ -1,5 +1,6 @@
 import { EngineClient } from './engine/EngineClient';
 import type { Problem } from './game/problem';
+import { successFeats, type Feat } from './game/feats';
 import { Session, type FailureReason } from './game/session';
 import { problemStatus, type Outcome } from './history/record';
 import type { HistoryStore } from './history/store';
@@ -11,10 +12,12 @@ import { pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
+import { Sound } from './ui/sound';
 
 /** 挑戦の結果 */
 type Result =
-  | { kind: 'success'; moves: number }
+  /** feats: 結果のカードで伝える達成 */
+  | { kind: 'success'; moves: number; feats: Feat[] }
   /** missedAt: 詰みを逃した攻方の手（1始まり） */
   | { kind: 'failure'; reason: FailureReason | 'giveup'; missedAt?: number };
 
@@ -40,8 +43,8 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
   giveup: 'ギブアップ',
 };
 
-/** 結果のカードを出すまでの時間。詰ませた手のアニメーションと局面を見せてから出す */
-const RESULT_DIALOG_DELAY_MS = { success: 600, failure: 300 } as const;
+/** 不正解のとき、結果のカードを出すまでの時間（最後の局面を見せてから出す）。正解のときは詰みの演出が終わってから出す */
+const FAILURE_DIALOG_DELAY_MS = 300;
 /** カードが出てすぐのタップ（盤を連打していた指）で、外側タップとして閉じないようにする */
 const DIALOG_TAP_GUARD_MS = 300;
 
@@ -74,6 +77,7 @@ export class App {
   private overlayHtml = '';
 
   private readonly board: BoardView;
+  private readonly sound: Sound;
   private readonly header: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly overlay: HTMLElement;
@@ -95,12 +99,18 @@ export class App {
     this.header = this.root.querySelector('.problem-info')!;
     this.panel = this.root.querySelector('.panel')!;
     this.overlay = this.root.querySelector('.overlay')!;
+    this.sound = new Sound(settings.sound);
     this.board = new BoardView({
       onSquare: (i) => this.onSquare(i),
       onHand: (c, t) => this.onHand(c, t),
       onReplay: (dir) => this.stepReview(dir),
+      onLand: (s) => this.sound.land(s),
     });
     this.root.querySelector('.app-main')!.appendChild(this.board.el);
+    // 詰みの演出中に盤をタップしたら、演出の終わりを待たずに結果のカードを出す
+    this.board.el.addEventListener('pointerdown', () => {
+      if (this.phase.kind === 'result' && this.phase.dialog === 'pending') this.openResultDialog(this.resultSeq);
+    });
     this.panel.addEventListener('click', (e) => this.onAction(e));
     this.overlay.addEventListener('click', (e) => {
       // 結果のカードの外側をタップしたら閉じて振り返りにする
@@ -233,11 +243,20 @@ export class App {
         break;
       case 'success': {
         this.lastAttempt = session.moves.slice();
-        this.showResult(state);
-        const outcome: Outcome = this.viewedAnswer
-          ? 'clear-after-viewing'
-          : state.moves <= session.problem.length ? 'shortest' : 'clear';
-        this.history.record(session.problem.id, outcome, state.moves);
+        const { id, length } = session.problem;
+        const before = this.history.records[id];
+        const snapshot = before && { ...before };
+        const outcome: Outcome = this.viewedAnswer ? 'clear-after-viewing' : state.moves <= length ? 'shortest' : 'clear';
+        this.history.record(id, outcome, state.moves);
+        const feats = successFeats({
+          problemId: id,
+          length,
+          moves: state.moves,
+          viewedAnswer: this.viewedAnswer,
+          before: snapshot,
+          records: this.history.records,
+        });
+        this.showResult({ kind: 'success', moves: state.moves, feats });
         break;
       }
       case 'failure':
@@ -251,17 +270,27 @@ export class App {
     this.render();
   }
 
-  /** 結果を出す。盤は自分の手順の最後の局面のまま、少し間を置いて結果のカードを出す */
+  /**
+   * 結果を出す。盤は自分の手順の最後の局面のまま、正解なら詰みの演出（止め→玉が沈む→「詰」の印）を見せてから、
+   * 不正解なら少し間を置いてから結果のカードを出す
+   */
   private showResult(result: Result): void {
     const seq = ++this.resultSeq;
     this.phase = { kind: 'result', result, review: { line: 'mine', step: this.lastAttempt.length }, dialog: 'pending' };
-    setTimeout(() => {
-      const phase = this.phase;
-      if (seq !== this.resultSeq || phase.kind !== 'result' || phase.dialog !== 'pending') return;
-      this.phase = { ...phase, dialog: 'open' };
-      this.dialogOpenedAt = performance.now();
-      this.render();
-    }, RESULT_DIALOG_DELAY_MS[result.kind]);
+    if (result.kind === 'success') {
+      const rare = result.feats.some((f) => f.rare);
+      void this.board.mate(rare, () => this.sound.mate(rare)).then(() => this.openResultDialog(seq));
+    } else {
+      setTimeout(() => this.openResultDialog(seq), FAILURE_DIALOG_DELAY_MS);
+    }
+  }
+
+  private openResultDialog(seq: number): void {
+    const phase = this.phase;
+    if (seq !== this.resultSeq || phase.kind !== 'result' || phase.dialog !== 'pending') return;
+    this.phase = { ...phase, dialog: 'open' };
+    this.dialogOpenedAt = performance.now();
+    this.render();
   }
 
   private fail(e: unknown): void {
@@ -605,9 +634,12 @@ export class App {
     if (result.kind === 'success') {
       const shortest = p ? result.moves <= p.length : true;
       const tag = this.viewedAnswer ? '解答閲覧後' : shortest ? '最短' : `最短は${p?.length}手`;
-      return `<div class="dialog result-card" role="dialog" aria-label="正解">
+      const rare = result.feats.some((f) => f.rare);
+      const feats = result.feats.map((f) => `<span class="feat${f.rare ? ' rare' : ''}">${escapeHtml(f.label)}</span>`).join('');
+      return `<div class="dialog result-card${rare ? ' rare' : ''}" role="dialog" aria-label="正解">
           <p class="result success">✓ ${result.moves}手で詰みました</p>
           <p><span class="tag success">${tag}</span></p>
+          ${feats ? `<p class="feats">${feats}</p>` : ''}
           ${btn('next', '次の問題 →', 'primary main')}
           <div class="actions">${btn('retry', '再挑戦', 'secondary')}${btn('review', '振り返る', 'secondary')}</div>
         </div>`;
@@ -638,6 +670,7 @@ export class App {
         <fieldset><legend>出題する手数</legend><div class="chips">${lengths}</div></fieldset>
         <fieldset><legend>出題順序</legend>${orders}</fieldset>
         <label class="radio"><input type="checkbox" name="showLength"${s.showLength ? ' checked' : ''}>解答中に詰み手数を表示する</label>
+        <label class="radio"><input type="checkbox" name="sound"${s.sound ? ' checked' : ''}>駒音を鳴らす</label>
         <fieldset><legend>評価関数</legend>
           <label class="radio"><input type="radio" name="variant" value="mini"${s.variant === 'mini' ? ' checked' : ''}>つようら王11mini（標準）</label>
           <label class="radio"><input type="radio" name="variant" value="micro"${s.variant === 'micro' ? ' checked' : ''}>つようら王11micro（軽量）</label>
@@ -663,7 +696,9 @@ export class App {
       order: (form.querySelector<HTMLInputElement>('input[name="order"]:checked')?.value ?? 'untried') as QuestionOrder,
       showLength: form.querySelector<HTMLInputElement>('input[name="showLength"]')!.checked,
       variant: form.querySelector<HTMLInputElement>('input[name="variant"]:checked')?.value === 'micro' ? 'micro' : 'mini',
+      sound: form.querySelector<HTMLInputElement>('input[name="sound"]')!.checked,
     };
+    this.sound.enabled = next.sound;
     const variantChanged = next.variant !== this.settings.variant;
     this.settings = next;
     saveSettings(next);

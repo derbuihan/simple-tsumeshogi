@@ -15,9 +15,11 @@ export interface Settings {
   order: QuestionOrder;
   showLength: boolean;
   variant: EvalVariant;
+  /** 駒音などの効果音 */
+  sound: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { lengths: [3, 5, 7], order: 'untried', showLength: false, variant: 'mini' };
+export const DEFAULT_SETTINGS: Settings = { lengths: [3, 5, 7], order: 'untried', showLength: false, variant: 'mini', sound: true };
 
 /** 出題の現在位置 */
 export interface Cursor {
@@ -42,6 +44,7 @@ export function loadSettings(): Settings {
       order: s.order && s.order in ORDER_LABELS ? s.order : DEFAULT_SETTINGS.order,
       showLength: typeof s.showLength === 'boolean' ? s.showLength : DEFAULT_SETTINGS.showLength,
       variant: s.variant === 'micro' ? 'micro' : 'mini',
+      sound: typeof s.sound === 'boolean' ? s.sound : DEFAULT_SETTINGS.sound,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
