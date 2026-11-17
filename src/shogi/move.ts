@@ -1,4 +1,4 @@
-import { opposite, squareIndex, type HandType, type Position } from './types';
+import { indexToSquare, opposite, squareIndex, type Color, type HandType, type PieceType, type Position } from './types';
 
 /** USI の指し手（例: "7g7f", "8h2b+", "B*5e"）を分解したもの */
 export type UsiMove =
@@ -11,6 +11,19 @@ const parseSquare = (s: string): number => {
   if (!(file >= 1 && file <= 9 && rank >= 0 && rank <= 8)) throw new Error(`invalid square: ${s}`);
   return squareIndex(file, rank);
 };
+
+/** マスの番号を USI の表記（例: "7g"）にする */
+export const usiSquare = (index: number): string => {
+  const { file, rank } = indexToSquare(index);
+  return `${file}${String.fromCharCode('a'.charCodeAt(0) + rank)}`;
+};
+
+/** 成らないと行き所がない（歩・香の最終段、桂の最終2段）か */
+export function mustPromote(type: PieceType, color: Color, to: number): boolean {
+  const rank = Math.floor(to / 9);
+  const depth = color === 'b' ? rank : 8 - rank;
+  return ((type === 'P' || type === 'L') && depth === 0) || (type === 'N' && depth <= 1);
+}
 
 export function parseUsiMove(usi: string): UsiMove {
   if (usi[1] === '*') {

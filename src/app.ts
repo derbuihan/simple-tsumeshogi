@@ -7,9 +7,10 @@ import { problemStatus, type Outcome } from './history/record';
 import type { HistoryStore } from './history/store';
 import { loadIndex, loadProblem, PROBLEM_LENGTHS } from './problems/loader';
 import { selectProblem } from './problems/selector';
+import { clearUpcoming, fitsLengths, readUpcoming, saveUpcoming, type Upcoming } from './problems/upcoming';
 import { loadCursor, ORDER_LABELS, saveCursor, saveSettings, type QuestionOrder, type Settings } from './settings';
-import { applyMoves, parseUsiMove } from './shogi/move';
-import { pieceChar } from './shogi/notation';
+import { applyMove, applyMoves, mustPromote, parseUsiMove, usiSquare } from './shogi/move';
+import { canPromoteType, inPromotionZone, pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
@@ -49,6 +50,9 @@ const FAILURE_DIALOG_DELAY_MS = 300;
 /** カードが出てすぐのタップ（盤を連打していた指）で、外側タップとして閉じないようにする */
 const DIALOG_TAP_GUARD_MS = 300;
 
+/** 起動時に履歴の同期を待つ上限。次の問題はこれを待ってから選ぶ（最初の問題は待たない） */
+const SYNC_WAIT_MS = 3000;
+
 /** 玉方の応手を見せるまでの最小待ち時間（攻方の手のアニメーションが終わるのを待つ） */
 const MIN_REPLY_DELAY_MS = 320;
 
@@ -59,6 +63,18 @@ export class App {
   private engine: EngineClient | null = null;
   /** 詰み専用エンジン（正誤の判定）。読み込めなければ null のまま、mini だけで判定する */
   private mateSolver: MateClient | null = null;
+  /** エンジン2つの読み込み。起動してすぐ裏で始め、1手目を指すまでは待たない。失敗したら次の挑戦で読み込み直す */
+  private engines: Promise<[EngineClient, MateClient | null]> | null = null;
+  /** エンジンの準備が済む前に指した1手目。準備が済んだら王手か確かめてから指す */
+  private queued: { move: string; at: number } | null = null;
+  /** 挑戦を始めるたびに増やす（古い挑戦の準備の続きを捨てるため） */
+  private attemptSeq = 0;
+  /** 次に出す問題（裏で選んで取得する） */
+  private upcoming: Promise<Upcoming | null> | null = null;
+  /** 次の問題を選び直すたびに増やす（古い取得の結果を保存しないため） */
+  private upcomingGen = 0;
+  /** 起動時の履歴の同期 */
+  private synced: Promise<unknown> = Promise.resolve();
   private problem: Problem | null = null;
   private session: Session | null = null;
   /** 最後に終わった挑戦の手順（解答再生の「自分の手順」） */
@@ -69,7 +85,7 @@ export class App {
   /** 出題方法についてのお知らせ（希望の順序で選べなかったときなど） */
   private problemNotice: string | undefined;
   private settingsOpen = false;
-  private phase: Phase = { kind: 'loading', message: '準備中…' };
+  private phase: Phase = { kind: 'loading', message: '問題を読み込み中…' };
   private selection: Selection = null;
   private pendingPromotion: { promote: string; plain: string } | null = null;
   private confirmGiveup = false;
@@ -156,30 +172,50 @@ export class App {
     });
   }
 
+  /**
+   * 起動する。前回保存した次の問題があれば、通信もエンジンも待たずにすぐ盤に出す。
+   * 履歴の同期とエンジンの読み込みは裏で進める。返す Promise はエンジンの読み込みまで済んだら解決する
+   */
   async start(): Promise<void> {
-    this.render();
-    const enginePromise = EngineClient.create(this.settings.variant);
-    enginePromise.catch(() => undefined);
-    const matePromise = MateClient.create().catch((e) => {
-      console.error('詰み専用エンジンを読み込めませんでした。mini だけで判定します', e);
-      return null;
-    });
-    try {
-      // 履歴が取れなくても出題は続ける（オフライン時は端末内の履歴を使う）
-      await Promise.race([this.history.sync(), new Promise((r) => setTimeout(r, 3000))]);
-      await this.loadProblem();
-      this.phase = { kind: 'loading', message: '将棋エンジンを読み込み中…' };
+    this.synced = Promise.race([this.history.sync(), new Promise((r) => setTimeout(r, SYNC_WAIT_MS))]);
+    const engines = this.loadEngines();
+    const stored = readUpcoming(this.settings.lengths);
+    if (stored) {
+      this.show(stored);
+    } else {
       this.render();
-      [this.engine, this.mateSolver] = await Promise.all([enginePromise, matePromise]);
-      await this.beginAttempt();
-    } catch (e) {
-      this.fail(e);
+      try {
+        // 履歴の同期は待たず、端末内の履歴で選ぶ
+        this.show(await this.pickProblem());
+      } catch (e) {
+        this.fail(e);
+        return;
+      }
     }
+    void this.beginAttempt();
+    this.prefetchNext();
+    await engines.catch(() => undefined);
   }
 
   // ---- 進行 ----
 
-  private async loadProblem(): Promise<void> {
+  private loadEngines(): Promise<[EngineClient, MateClient | null]> {
+    if (!this.engines) {
+      const mate = MateClient.create().catch((e) => {
+        console.error('詰み専用エンジンを読み込めませんでした。mini だけで判定します', e);
+        return null;
+      });
+      const p = Promise.all([EngineClient.create(this.settings.variant), mate]);
+      this.engines = p;
+      p.catch(() => {
+        if (this.engines === p) this.engines = null;
+      });
+    }
+    return this.engines;
+  }
+
+  /** 設定と履歴から問題を選んで取得する */
+  private async pickProblem(): Promise<Upcoming> {
     const index = await loadIndex();
     const result = selectProblem({
       index,
@@ -190,41 +226,106 @@ export class App {
       excludeId: this.problem?.id,
     });
     saveCursor(result.cursor);
-    this.problem = await loadProblem(result.id);
-    this.problemNotice = result.fallback;
+    return { problem: await loadProblem(result.id), notice: result.fallback };
+  }
+
+  /** 次に出す問題を裏で選んで取得し、次の起動のために保存しておく。失敗しても、出すときに取得し直す */
+  private prefetchNext(): void {
+    const gen = ++this.upcomingGen;
+    this.upcoming = (async () => {
+      await this.synced;
+      const u = await this.pickProblem();
+      if (gen === this.upcomingGen) saveUpcoming(u);
+      return u;
+    })().catch((e) => {
+      console.warn('次の問題を取得できませんでした', e);
+      return null;
+    });
+  }
+
+  private show({ problem, notice }: Upcoming): void {
+    this.problem = problem;
+    this.problemNotice = notice;
     this.viewedAnswer = false;
     this.lastAttempt = [];
     this.session = null;
   }
 
-  /** 問題の初期局面から挑戦を始める */
+  /**
+   * 問題の初期局面から挑戦を始める。盤はすぐ操作できるようにし、エンジンの準備は裏で待つ。
+   * 準備が済む前に指した1手目は、準備が済んでから王手か確かめて指す
+   */
   private async beginAttempt(): Promise<void> {
-    if (!this.problem || !this.engine) return;
+    const problem = this.problem;
+    if (!problem) return;
+    const seq = ++this.attemptSeq;
     this.selection = null;
-    this.session = new Session(this.problem, this.engine, { mateSolver: this.mateSolver ?? undefined });
-    this.phase = { kind: 'playing', thinking: true };
+    this.queued = null;
+    this.session = null;
+    this.phase = { kind: 'playing', thinking: false };
     this.render();
-    const state = await this.session.start();
-    this.afterState(state);
+    try {
+      const [engine, mateSolver] = this.engine ? [this.engine, this.mateSolver] : await this.loadEngines();
+      this.engine = engine;
+      this.mateSolver = mateSolver;
+      if (seq !== this.attemptSeq) return;
+      const session = new Session(problem, engine, { mateSolver: mateSolver ?? undefined });
+      const state = await session.start();
+      if (seq !== this.attemptSeq) return;
+      this.session = session;
+      // 待っている間に指した1手目（TS は await をまたいでも上の null 代入のままと見なすので型を戻す）
+      const queued = this.queued as App['queued'];
+      this.queued = null;
+      if (queued && state.kind === 'attacker-turn') {
+        if (state.checks.includes(queued.move)) {
+          void this.play(queued.move, queued.at);
+        } else {
+          this.phase = { kind: 'playing', thinking: false, notice: 'その手では王手になりません' };
+          this.render();
+        }
+        return;
+      }
+      this.afterState(state);
+    } catch (e) {
+      if (seq === this.attemptSeq) this.fail(e);
+    }
   }
 
   private async nextProblem(): Promise<void> {
+    this.attemptSeq++;
     this.phase = { kind: 'loading', message: '問題を読み込み中…' };
     this.render();
     try {
-      await this.loadProblem();
-      await this.beginAttempt();
+      const pending = this.upcoming;
+      this.upcoming = null;
+      let next = pending ? await pending : null;
+      if (!next || next.problem.id === this.problem?.id || !fitsLengths(next, this.settings.lengths)) next = await this.pickProblem();
+      this.show(next);
+      void this.beginAttempt();
+      this.prefetchNext();
     } catch (e) {
       this.fail(e);
     }
   }
 
-  private async play(move: string): Promise<void> {
+  /** 攻方の手を指す。エンジンの準備が済む前なら保留する */
+  private submit(move: string): void {
+    if (this.preparing) return this.queueFirst(move);
+    // 準備中に選んだ手（成・不成の確認中に準備が済んだ）は、王手か確かめてから指す
+    if (!this.checks.includes(move)) {
+      this.setNotice('その手では王手になりません');
+      this.render();
+      return;
+    }
+    void this.play(move);
+  }
+
+  /** @param started 指した時刻（保留した1手目なら、保留した時刻。エンジンを待った時間も玉方の考慮時間に含める） */
+  private async play(move: string, started = performance.now()): Promise<void> {
     const session = this.session;
     if (!session || this.phase.kind !== 'playing') return;
     this.selection = null;
     this.phase = { kind: 'playing', thinking: true };
-    const started = performance.now();
     // 応手（または不正解）を見せるまでの時間を、玉方の探索時間にそろえる。
     // 詰みがあるとエンジンはすぐ返すので、そろえないと待ち時間で正誤が分かってしまう
     const delay = Math.max(MIN_REPLY_DELAY_MS, session.nextMovetimeMs);
@@ -324,7 +425,51 @@ export class App {
     return targets;
   }
 
+  /** エンジンの準備中で、1手目をまだ指していない */
+  private get preparing(): boolean {
+    return this.phase.kind === 'playing' && !this.phase.thinking && !this.session && !this.queued && !!this.problem;
+  }
+
+  /** 準備中の1手目を保留する。盤には指した手を出し、玉方が考えている表示にする */
+  private queueFirst(move: string): void {
+    this.queued = { move, at: performance.now() };
+    this.selection = null;
+    this.phase = { kind: 'playing', thinking: true };
+    this.render();
+  }
+
+  /**
+   * エンジンの準備中の盤のタップ。王手かどうかはまだ分からないので、自分の駒を選んで
+   * 自分の駒がないマスをタップしたら、その手を保留する（王手でなければ準備が済んでから戻す）
+   */
+  private onSquareEarly(index: number): void {
+    const p = this.problem!;
+    const pos = parseSfen(p.sfen);
+    const piece = pos.board[index];
+    const sel = this.selection;
+    if (piece?.color === p.attacker) {
+      const same = sel?.kind === 'board' && sel.index === index;
+      this.selection = same ? null : { kind: 'board', index };
+    } else if (sel?.kind === 'board') {
+      const mover = pos.board[sel.index]!;
+      const plain = `${usiSquare(sel.index)}${usiSquare(index)}`;
+      if (canPromoteType(mover.type) && !mover.promoted && inPromotionZone(p.attacker, sel.index, index)) {
+        if (mustPromote(mover.type, p.attacker, index)) return this.queueFirst(`${plain}+`);
+        this.pendingPromotion = { promote: `${plain}+`, plain };
+      } else {
+        return this.queueFirst(plain);
+      }
+    } else if (sel?.kind === 'hand' && !piece) {
+      return this.queueFirst(`${sel.type}*${usiSquare(index)}`);
+    } else {
+      this.selection = null;
+    }
+    this.setNotice(undefined);
+    this.render();
+  }
+
   private onSquare(index: number): void {
+    if (this.preparing) return this.onSquareEarly(index);
     if (!this.session || this.checks.length === 0) return;
     const pos = this.session.position;
     const piece = pos.board[index];
@@ -343,7 +488,7 @@ export class App {
         this.pendingPromotion = { promote, plain };
         this.render();
       } else {
-        void this.play((promote ?? plain)!);
+        this.submit((promote ?? plain)!);
       }
       return;
     }
@@ -360,6 +505,14 @@ export class App {
   }
 
   private onHand(color: Color, type: HandType): void {
+    if (this.preparing) {
+      if (color !== this.problem!.attacker) return;
+      const same = this.selection?.kind === 'hand' && this.selection.type === type;
+      this.selection = same ? null : { kind: 'hand', type };
+      this.setNotice(undefined);
+      this.render();
+      return;
+    }
     if (!this.session || color !== this.session.problem.attacker || this.checks.length === 0) return;
     const same = this.selection?.kind === 'hand' && this.selection.type === type;
     this.selection = same ? null : { kind: 'hand', type };
@@ -391,10 +544,11 @@ export class App {
         break;
       case 'giveup-ok':
         this.confirmGiveup = false;
-        if (this.session) {
-          this.lastAttempt = this.session.moves.slice();
-          this.history.record(this.session.problem.id, 'giveup');
-        }
+        // エンジンの準備中なら、準備の続きで挑戦を始めないようにする
+        this.attemptSeq++;
+        this.queued = null;
+        this.lastAttempt = this.session?.moves.slice() ?? [];
+        if (this.problem) this.history.record(this.problem.id, 'giveup');
         this.viewedAnswer = true;
         // 自分で解答を見ると決めたので、結果のカードは出さずにすぐ解答の振り返りにする
         this.resultSeq++;
@@ -424,7 +578,7 @@ export class App {
         if (this.pendingPromotion) {
           const move = action === 'promote-yes' ? this.pendingPromotion.promote : this.pendingPromotion.plain;
           this.pendingPromotion = null;
-          void this.play(move);
+          this.submit(move);
           return;
         }
         break;
@@ -517,8 +671,12 @@ export class App {
       lastMove = this.session.moves.at(-1) ?? null;
     } else {
       position = parseSfen(p.sfen);
+      if (this.queued) {
+        position = applyMove(position, this.queued.move);
+        lastMove = this.queued.move;
+      }
     }
-    const interactive = this.checks.length > 0 && !this.pendingPromotion && !this.confirmGiveup && !this.settingsOpen;
+    const interactive = (this.checks.length > 0 || this.preparing) && !this.pendingPromotion && !this.confirmGiveup && !this.settingsOpen;
     this.board.render({
       position,
       bottom: p.attacker,
@@ -590,9 +748,10 @@ export class App {
   }
 
   private renderOverlay(): void {
-    if (this.pendingPromotion && this.session) {
+    if (this.pendingPromotion && this.problem) {
       const mv = parseUsiMove(this.pendingPromotion.plain);
-      const piece = mv.kind === 'move' ? this.session.position.board[mv.from] : null;
+      const position = this.session?.position ?? parseSfen(this.problem.sfen);
+      const piece = mv.kind === 'move' ? position.board[mv.from] : null;
       const plainChar = piece ? pieceChar(piece) : '';
       const promChar = piece ? pieceChar({ ...piece, promoted: true }) : '';
       this.overlay.innerHTML = `<div class="dialog" role="dialog" aria-label="成りますか">
@@ -707,7 +866,13 @@ export class App {
     };
     this.sound.enabled = next.sound;
     const variantChanged = next.variant !== this.settings.variant;
+    const orderChanged = next.order !== this.settings.order || next.lengths.join() !== this.settings.lengths.join();
     this.settings = next;
+    // 次の問題は前の設定で選んだものなので、選び直す
+    if (orderChanged) {
+      clearUpcoming();
+      this.prefetchNext();
+    }
     saveSettings(next);
     this.settingsOpen = false;
     // 評価関数の切り替えはエンジンを読み込み直す必要があるので再読み込みする
