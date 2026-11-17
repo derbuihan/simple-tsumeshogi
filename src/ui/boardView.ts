@@ -210,8 +210,8 @@ export class BoardView {
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     // 減速しながら滑り込むと柔らかく見えるので、ほぼ一瞬で運び、勢いのまま止める
-    const slideMs = Math.round(Math.min(100, 60 + Math.hypot(dx, dy) * 0.1));
-    const flightMs = 110;
+    const slideMs = Math.round(Math.min(60, 35 + Math.hypot(dx, dy) * 0.07));
+    const flightMs = 80;
 
     // 取られる駒は、動かす駒の下に一旦残しておく
     let victim: HTMLElement | null = null;
@@ -235,10 +235,10 @@ export class BoardView {
       settle(
         el.animate(
           [
-            // わずかに持ち上げて、減速せずに目的のマスまで運び…
-            { transform: `translate(${dx}px, ${dy}px) scale(1.04)`, easing: 'cubic-bezier(.4,0,.8,.7)' },
-            { transform: 'translate(0, 0) scale(1.04)', offset: 0.85, easing: 'linear' },
-            // …その場で盤に落として止める
+            // 持ち上げて、減速せずに目的のマスまで運び…
+            { transform: `translate(${dx}px, ${dy}px) scale(1.08)`, easing: 'cubic-bezier(.2,.4,.6,1)' },
+            { transform: 'translate(0, 0) scale(1.08)', offset: 0.85, easing: 'cubic-bezier(.6,0,1,.6)' },
+            // …その場で盤に叩きつける
             { transform: 'translate(0, 0) scale(1)' },
           ],
           { duration: slideMs },
@@ -249,34 +249,125 @@ export class BoardView {
     el.classList.remove('moving');
     if (gen !== this.generation) return;
 
-    // 着手：盤に駒を打ちつけた手応え。振動は自分（攻方）が指した手だけ（玉方の応手・振り返りでは鳴らさない）
-    this.impact(el);
-    if (mover === this.model!.bottom && !this.model!.replay) tapHaptic();
+    // 着手：盤に駒を打ちつけた手応え。振り返りで手順を送るときは控えめにする
+    if (this.model!.replay) this.softImpact(el);
+    else this.impact(el);
 
     if (victim) await this.carryToHand(victim, captured!, handTarget, flightMs);
   }
 
   /**
-   * 着地の瞬間。駒を一瞬だけ押しつぶして戻し（揺れ戻しは付けない）、盤を1px沈ませ、
-   * マスの枠を一瞬光らせる。どれも短く、すぐに止める
+   * 着地の瞬間（対局中）。駒を大きく押しつぶして弾み返らせ、置いたマスから光の波紋を盤全体に広げ、
+   * マスを白く光らせて衝撃の輪を2重に広げ、木くずを四方に飛ばす。盤そのものは動かさない
    */
   private impact(el: HTMLElement): void {
+    el.querySelector<HTMLElement>('.pc-face')!.animate(
+      [
+        { transform: 'scale(1.22, 0.74)' },
+        { transform: 'scale(0.92, 1.1)', offset: 0.35 },
+        { transform: 'scale(1.04, 0.97)', offset: 0.7 },
+        { transform: 'scale(1)' },
+      ],
+      { duration: 140, easing: 'cubic-bezier(.2,.7,.3,1)' },
+    );
+
+    // 光と輪は駒の下に、木くずは駒の上に描く
+    const style = el.getAttribute('style') ?? '';
+    const under = fragment(`<div class="impact-fx" style="${style}"><div class="impact-flash"></div></div>`);
+    const over = fragment(`<div class="impact-fx over" style="${style}"></div>`);
+    const flash = under.firstElementChild as HTMLElement;
+    const anims: Animation[] = [flash.animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 180, easing: 'ease-out' })];
+    for (const [delay, to] of [
+      [0, 1.9],
+      [50, 2.5],
+    ] as const) {
+      const ring = document.createElement('div');
+      ring.className = 'impact-ring';
+      under.appendChild(ring);
+      anims.push(
+        ring.animate(
+          [
+            { transform: 'scale(0.9)', opacity: 1, borderWidth: '3px' },
+            { transform: `scale(${to})`, opacity: 0, borderWidth: '1px' },
+          ],
+          { duration: 320, delay, easing: 'cubic-bezier(.1,.8,.3,1)', fill: 'backwards' },
+        ),
+      );
+    }
+    const cell = el.getBoundingClientRect().width;
+    const count = 10;
+    for (let i = 0; i < count; i++) {
+      const angle = ((i + Math.random() * 0.6) / count) * Math.PI * 2;
+      const dist = cell * (0.75 + Math.random() * 0.5);
+      const size = 2 + Math.random() * 3;
+      const chip = document.createElement('div');
+      chip.className = 'impact-chip';
+      chip.style.width = chip.style.height = `${size}px`;
+      over.appendChild(chip);
+      const x = Math.cos(angle) * dist;
+      const y = Math.sin(angle) * dist * 1.09;
+      anims.push(
+        chip.animate(
+          [
+            { transform: 'translate(-50%, -50%) translate(0, 0) scale(1)', opacity: 1 },
+            { transform: `translate(-50%, -50%) translate(${x}px, ${y}px) scale(0.3)`, opacity: 0 },
+          ],
+          { duration: 260 + Math.random() * 120, easing: 'cubic-bezier(.1,.9,.3,1)' },
+        ),
+      );
+    }
+
+    // 盤全体への波紋。盤は動かさず、置いたマスを中心に光の輪が盤の端まで広がって消える
+    const board = this.pieces.getBoundingClientRect();
+    const c = center(el.getBoundingClientRect());
+    const cx = c.x - board.left;
+    const cy = c.y - board.top;
+    const radius = Math.max(
+      Math.hypot(cx, cy),
+      Math.hypot(board.width - cx, cy),
+      Math.hypot(cx, board.height - cy),
+      Math.hypot(board.width - cx, board.height - cy),
+    );
+    const ripple = fragment(
+      `<div class="board-ripple"><div style="left:${cx - radius}px;top:${cy - radius}px;width:${radius * 2}px;height:${radius * 2}px"></div></div>`,
+    );
+    anims.push(
+      (ripple.firstElementChild as HTMLElement).animate(
+        [
+          { transform: 'scale(0.08)', opacity: 0.9 },
+          { transform: 'scale(1)', opacity: 0 },
+        ],
+        { duration: 420, easing: 'cubic-bezier(.2,.6,.4,1)' },
+      ),
+    );
+
+    this.pieces.insertBefore(ripple, this.pieces.firstChild);
+    this.pieces.insertBefore(under, el);
+    this.pieces.appendChild(over);
+    void Promise.all(anims.map(settle)).then(() => {
+      ripple.remove();
+      under.remove();
+      over.remove();
+    });
+  }
+
+  /** 着地の瞬間（振り返り）。駒を一瞬押しつぶし、マスの枠を一瞬光らせるだけ */
+  private softImpact(el: HTMLElement): void {
     el.querySelector<HTMLElement>('.pc-face')!.animate([{ transform: 'scale(1.04, 0.93)' }, { transform: 'scale(1)' }], {
       duration: 50,
       easing: 'cubic-bezier(.2,0,.2,1)',
     });
-    this.grid.animate([{ transform: 'translateY(1px)' }, { transform: 'translateY(0)' }], { duration: 50, easing: 'linear' });
-    const ring = fragment(`<div class="impact" style="${el.getAttribute('style')}"></div>`);
-    this.pieces.appendChild(ring);
+    const fx = fragment(`<div class="impact-fx" style="${el.getAttribute('style')}"><div class="impact-ring"></div></div>`);
+    this.pieces.insertBefore(fx, el);
     void settle(
-      ring.animate(
+      (fx.firstElementChild as HTMLElement).animate(
         [
           { transform: 'scale(1)', opacity: 1 },
           { transform: 'scale(1.12)', opacity: 0 },
         ],
         { duration: 130, easing: 'cubic-bezier(.2,.8,.4,1)' },
       ),
-    ).then(() => ring.remove());
+    ).then(() => fx.remove());
   }
 
   /**
@@ -340,26 +431,6 @@ function fragment(html: string): HTMLElement {
 function setFace(el: HTMLElement, p: Piece): void {
   el.querySelector('.pc-char')!.textContent = pieceChar(p);
   el.classList.toggle('promoted', p.promoted);
-}
-
-type HapticNavigator = Navigator & { playHaptics?: (effect: string, intensity?: number) => unknown };
-
-/**
- * 駒を置いた手応えの、ごく軽い振動。
- * Web Haptics API（navigator.playHaptics、Chromium で実験中）が使えればそれで軽く鳴らす（強さを指定でき、OS のタップ時のバイブと同じ鳴り方になる）。
- * 使えなければ navigator.vibrate で短く鳴らす（強さは指定できないので、短くして軽く感じさせる）。
- */
-function tapHaptic(): void {
-  const nav = navigator as HapticNavigator;
-  if (typeof nav.playHaptics === 'function') {
-    try {
-      void Promise.resolve(nav.playHaptics('align', 0.5)).catch(() => undefined);
-      return;
-    } catch {
-      /* 使えなければ vibrate にする */
-    }
-  }
-  navigator.vibrate?.(6);
 }
 
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;

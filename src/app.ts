@@ -377,10 +377,11 @@ export class App {
         }
         break;
       case 'review':
-        if (phase.kind === 'result') this.phase = { ...phase, dialog: 'closed' };
+        // 正解の振り返りは自分の手順を初手から見直す（結果のカードが出ている間は詰みの局面のまま）
+        if (phase.kind === 'result') this.phase = { ...phase, review: { line: 'mine', step: this.mineStartStep(phase.result) }, dialog: 'closed' };
         break;
       case 'line-mine':
-        if (phase.kind === 'result') this.phase = { ...phase, review: { line: 'mine', step: this.lastAttempt.length } };
+        if (phase.kind === 'result') this.phase = { ...phase, review: { line: 'mine', step: this.mineStartStep(phase.result) } };
         break;
       case 'promote-yes':
       case 'promote-no':
@@ -423,6 +424,11 @@ export class App {
     if (step === phase.review.step) return;
     this.phase = { ...phase, review: { ...phase.review, step } };
     this.render();
+  }
+
+  /** 振り返りで自分の手順を開いたときの手数。正解なら初手から、不正解なら最後の局面から */
+  private mineStartStep(result: Result): number {
+    return result.kind === 'success' ? 0 : this.lastAttempt.length;
   }
 
   private answerLine(line: 'model' | 'mine'): string[] {
