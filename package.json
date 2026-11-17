@@ -12,6 +12,8 @@
     "fetch:problems": "bash scripts/fetch-problems.sh",
     "prepare:mate-engine": "bash scripts/prepare-official-mate-engine.sh",
     "filter:minimal-hand": "python3 scripts/filter-minimal-hand.py",
+    "prepare:native-mini": "bash scripts/prepare-native-mini.sh",
+    "regen:solutions": "python3 scripts/regen-solutions.py",
     "build:index": "node scripts/build-problem-index.mjs .cache/minimal-hand/public/data public/problems-index.json",
     "fetch:eval": "bash scripts/fetch-eval.sh",
     "build:engine": "bash engine/build.sh",
