@@ -1,7 +1,8 @@
 # 駒を指したときの手応えの検討
 
 2026-11-17 に、駒を動かしたときの気持ちよさを調整した。試したことと評価を残す。
-実装は `src/ui/boardView.ts` の `animate()`・`impact()`・`softImpact()` と、`src/styles.css` の着地の演出（`.impact-*`・`.board-ripple`）。
+実装は `src/ui/effects/pieceEffects.ts`（移動・着地：`playStep()`・`impact()`・`softImpact()`）、`src/ui/effects/mateEffects.ts`（詰み）と、`src/styles.css` の着地の演出（`.impact-*`・`.board-ripple`）。
+演出のアニメーション・待ち時間・一時的な DOM は、局面ごとの `AnimationScope`（`src/ui/effects/animationScope.ts`）に登録し、局面が変わったらまとめて止める。
 
 ## 結論（今の実装）
 
