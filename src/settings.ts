@@ -16,9 +16,11 @@ export interface Settings {
   variant: EvalVariant;
   /** 駒音などの効果音 */
   sound: boolean;
+  /** 盤の裏の幽霊を出す */
+  ghost: boolean;
 }
 
-export const DEFAULT_SETTINGS: Settings = { lengths: [3, 5, 7], order: 'untried', showLength: false, variant: 'mini', sound: true };
+export const DEFAULT_SETTINGS: Settings = { lengths: [3, 5, 7], order: 'untried', showLength: false, variant: 'mini', sound: true, ghost: true };
 
 /** 出題の現在位置 */
 export interface Cursor {
@@ -40,6 +42,7 @@ export function loadSettings(): Settings {
       showLength: typeof s.showLength === 'boolean' ? s.showLength : DEFAULT_SETTINGS.showLength,
       variant: s.variant === 'micro' ? 'micro' : 'mini',
       sound: typeof s.sound === 'boolean' ? s.sound : DEFAULT_SETTINGS.sound,
+      ghost: typeof s.ghost === 'boolean' ? s.ghost : DEFAULT_SETTINGS.ghost,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };

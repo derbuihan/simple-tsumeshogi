@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Finish } from '../src/game/finish';
 import {
+  deflateSizes,
   DIRS,
   eatsFor,
   extraSoulsFor,
@@ -9,8 +10,10 @@ import {
   kingSoulOf,
   MAX_STREAK,
   pickDir,
+  SIZES,
   sizeFor,
   soulLookOf,
+  STAND_SIZE,
   spotNear,
   streakAfterSuccess,
   type Cells,
@@ -88,5 +91,18 @@ describe('隠れ場所', () => {
   it('真ん中の玉なら、どの側も選ばれうる', () => {
     const seen = new Set(Array.from({ length: 16 }, (_, i) => JSON.stringify(pickDir({ x: 4, y: 4 }, 2.4, cells, () => i / 16))));
     expect(seen.size).toBe(DIRS.length);
+  });
+});
+
+describe('逃げられたとき', () => {
+  it('連チャンの数だけ魂が抜け、そのたびに1段ずつしぼんで、駒台の大きさで終わる', () => {
+    expect(deflateSizes(3)).toEqual([SIZES[2], SIZES[1], STAND_SIZE]);
+    expect(deflateSizes(1)).toEqual([STAND_SIZE]);
+    expect(deflateSizes(0)).toEqual([]);
+  });
+
+  it('10連より多くは抜けない', () => {
+    expect(deflateSizes(MAX_STREAK + 5)).toHaveLength(MAX_STREAK);
+    expect(deflateSizes(MAX_STREAK)[0]).toBe(SIZES[MAX_STREAK - 1]);
   });
 });

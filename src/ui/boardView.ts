@@ -5,7 +5,7 @@ import { HAND_TYPES, opposite, type Color, type HandType, type Position } from '
 import { AnimationScope } from './effects/animationScope';
 import { playMate } from './effects/mateEffects';
 import { playStep, type BoardFx } from './effects/pieceEffects';
-import { GhostView } from './ghost/ghostView';
+import { GhostView, type GhostSounds } from './ghost/ghostView';
 import { pieceHtml } from './pieceDom';
 import type { LandSound } from './sound';
 import { detectStep } from './step';
@@ -36,6 +36,8 @@ export interface BoardViewHandlers {
   onReplay(dir: -1 | 1): void;
   /** 駒が盤に着地した瞬間（効果音を合わせる） */
   onLand(sound: LandSound): void;
+  /** 幽霊の効果音 */
+  readonly ghostSounds: GhostSounds;
 }
 
 /**
@@ -62,8 +64,8 @@ export class BoardView {
   private landed: Promise<void> = Promise.resolve();
   /** 演出に渡す盤の情報 */
   private readonly fx: BoardFx;
-  /** 盤の裏の幽霊（連チャン・詰み・逃げられた・眠るは App から呼ぶ） */
-  readonly ghost: GhostView;
+  /** 盤の裏の幽霊（連チャン・詰み・逃げられた・眠るは App から呼ぶ）。出さない設定のときは null */
+  ghost: GhostView | null = null;
 
   constructor(private readonly handlers: BoardViewHandlers) {
     this.el = document.createElement('div');
@@ -100,8 +102,6 @@ export class BoardView {
       cell.dataset.display = String(d);
       this.grid.insertBefore(cell, this.pieces);
     }
-    // マスは .board の子の並び順で探すので、幽霊の層はマスを作った後に入れる
-    this.ghost = new GhostView({ board: this.grid, pieces: this.pieces, stand: this.bottomHand, enemyStand: this.topHand });
     this.grid.addEventListener('click', (e) => {
       if (this.model?.replay) {
         // 盤を反転していても、画面上の左右で決める
@@ -120,6 +120,22 @@ export class BoardView {
         this.handlers.onHand(btn.dataset.color as Color, btn.dataset.type as HandType);
       });
     }
+  }
+
+  /**
+   * 幽霊を出す・出さない。出すときは連チャン 0（攻方の駒台の上）から始める。
+   * 出さない人には幽霊の DOM を作らず、絵も読み込まない
+   */
+  setGhost(on: boolean): void {
+    if (on === !!this.ghost) return;
+    if (!on) {
+      this.ghost!.destroy();
+      this.ghost = null;
+      return;
+    }
+    // マスは .board の子の並び順で探すので、幽霊の層はマスの後ろ（駒の層の前）に入れる
+    this.ghost = new GhostView({ board: this.grid, pieces: this.pieces, stand: this.bottomHand, enemyStand: this.topHand, sounds: this.handlers.ghostSounds });
+    if (this.model) this.ghost.update(this.model.position, this.model.bottom, false, false);
   }
 
   private get flipped(): boolean {
@@ -160,10 +176,10 @@ export class BoardView {
       this.renderPieces(model.position, model.bottom);
       this.renderHand(this.bottomHand, model.position, model.bottom, '攻方', true);
       this.renderHand(this.topHand, model.position, opposite(model.bottom), '玉方', false);
-      this.ghost.update(model.position, model.bottom, !!stepped, model.replay);
+      this.ghost?.update(model.position, model.bottom, !!stepped, model.replay);
       const onLand = (s: LandSound) => {
         this.handlers.onLand(s);
-        this.ghost.land(s);
+        this.ghost?.land(s);
       };
       this.landed = step ? playStep(this.scope, this.fx, step, { dropFrom, handBefore: handBefore!, onLand }).catch(console.error) : Promise.resolve();
     }

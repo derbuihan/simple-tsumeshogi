@@ -29,6 +29,15 @@ export function streakAfterSuccess(streak: number, viewedAnswer: boolean, solved
   return viewedAnswer || solvedBefore ? streak : clampStreak(streak + 1);
 }
 
+/**
+ * 逃げられて連チャン streak が切れたとき、食べた魂が1つずつ抜けていくたびの大きさ（マス数）。
+ * 抜けた魂の数＝連チャン（10連以上は 10 個）。最後は駒台の大きさになる
+ */
+export function deflateSizes(streak: number): number[] {
+  const n = clampStreak(streak);
+  return Array.from({ length: n }, (_, i) => SIZES[n - 1 - i]);
+}
+
 /** 魂の食べ方 */
 export type Eat = 'slurp' | 'lunge' | 'chase' | 'catch' | 'split' | 'feast';
 

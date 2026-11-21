@@ -8,6 +8,7 @@ import {
   extraSoulsFor,
   HUES,
   kingSoulOf,
+  deflateSizes,
   MAX_STREAK,
   PLAIN_LOOK,
   pickDir,
@@ -31,6 +32,7 @@ import {
  * - 盤の裏では玉方の玉のそばに隠れ、玉が動けば追いかける。照明も玉を中心に灯し、連チャンで熱くなる（10連で虹）
  * - 着地のたびに、手の種類（指す・取る・成る・打つ・応手）でリアクションする。手の良し悪しでは変えない
  * - 結果が出た後にしばらく触らないと眠る（考えている間は眠らない）
+ * - 逃げられると、食べた魂が1つずつ抜けてしぼみ、とぼとぼ駒台へ帰ってため息をつく
  *
  * 決まりごと（大きさ・色・食べ方・隠れ場所）は rules.ts。演出の考え方は docs/ghost.md。
  */
@@ -45,6 +47,19 @@ export interface GhostHost {
   readonly stand: HTMLElement;
   /** 玉方の駒台（捨て駒の魂が戻ってくる所） */
   readonly enemyStand: HTMLElement;
+  readonly sounds: GhostSounds;
+}
+
+/** 幽霊の効果音（src/ui/sound.ts で合成する。効果音を切っていれば鳴らない） */
+export interface GhostSounds {
+  /** ぱくっ（魂を口に入れた） */
+  gulp(soft?: boolean): void;
+  /** もぐ（ひと噛み） */
+  munch(): void;
+  /** 魂が抜けていく（i 番目／n 個。抜けるほど低くなる） */
+  release(i: number, n: number): void;
+  /** はぁ（駒台に帰ってため息） */
+  sigh(): void;
 }
 
 /** 詰ませたときに渡すもの */
@@ -93,9 +108,17 @@ export class GhostView {
   /** 幽霊の動き。新しい動きを始めるときは、今の見た目から続ける（打ち切って戻すと大きさが跳ぶ） */
   private scope = new AnimationScope();
   private faceTimer = 0;
+  private shrinkTimer = 0;
   private sleepTimer = 0;
   private asleep = false;
   private zzz: HTMLElement | null = null;
+  /** 食べて育った魂の見た目（連チャンの数だけ。逃げられたら、この色の魂が抜けていく） */
+  private eaten: (SoulLook | 'rainbow')[] = [];
+  private readonly resize: ResizeObserver;
+  private readonly onInput = () => {
+    if (this.asleep) this.wake();
+    if (this.sleepTimer) this.sleepLater();
+  };
 
   constructor(private readonly host: GhostHost) {
     this.haunt = document.createElement('div');
@@ -118,14 +141,22 @@ export class GhostView {
     this.pose = this.haunt.querySelector('.spirit-pose')!;
     this.pose.style.opacity = String(this.rest);
     // 居場所は px で持つので、盤の大きさが変わったら（画面の向き・文字の大きさ）置き直す
-    new ResizeObserver(() => this.relayout()).observe(host.board);
+    this.resize = new ResizeObserver(() => this.relayout());
+    this.resize.observe(host.board);
     // 眠っている間にどこかに触れたら起きる。結果の画面で触るたびに、眠るまでを数え直す
-    for (const ev of ['pointerdown', 'keydown'] as const) {
-      window.addEventListener(ev, () => {
-        if (this.asleep) this.wake();
-        if (this.sleepTimer) this.sleepLater();
-      });
-    }
+    for (const ev of ['pointerdown', 'keydown'] as const) window.addEventListener(ev, this.onInput);
+  }
+
+  /** 幽霊を出さない設定にした：演出を止め、層と照明を取り除く */
+  destroy(): void {
+    this.scope.cancel();
+    window.clearTimeout(this.faceTimer);
+    window.clearTimeout(this.sleepTimer);
+    this.resize.disconnect();
+    for (const ev of ['pointerdown', 'keydown'] as const) window.removeEventListener(ev, this.onInput);
+    this.haunt.remove();
+    this.over.remove();
+    this.host.board.closest<HTMLElement>('.board-area')?.style.removeProperty('--frame-glow');
   }
 
   // ---- 盤から呼ぶ ----
@@ -156,7 +187,7 @@ export class GhostView {
     if (this.where === 'board' && king && moved) {
       // 玉が逃げた：ふわっとついて行く
       this.paintLight();
-      void this.travel(this.spotNow(), 700, false);
+      void this.travel(this.spotNow(), 700, { face: null });
     }
   }
 
@@ -171,6 +202,7 @@ export class GhostView {
   /** 詰み（玉が沈む瞬間に呼ぶ）。玉から魂が抜け、幽霊が食べる */
   mate(m: GhostMate): void {
     this.pending = m.after > m.before ? m.after : null;
+    if (this.pending !== null) this.eaten = [...this.eaten, m.after >= MAX_STREAK ? ('rainbow' as const) : kingSoulOf(m.finish).end].slice(-MAX_STREAK);
     if (reducedMotion()) {
       if (this.pending !== null && this.where === 'stand') this.moveToBoard();
       this.grow();
@@ -181,8 +213,12 @@ export class GhostView {
 
   /** 逃げられた（ギブアップも）：しょんぼりして駒台へ帰る */
   fail(): void {
+    // 食べる途中（まだ育っていない）なら、その分は無かったことにする
+    const was = this.pending ?? this.streak;
     this.pending = null;
-    if (this.where === 'stand' && this.streak === 0) {
+    const lost = this.eaten;
+    this.eaten = [];
+    if (this.where === 'stand' && was === 0) {
       if (!reducedMotion()) this.react('sad');
       return;
     }
@@ -190,18 +226,11 @@ export class GhostView {
     if (reducedMotion()) {
       this.where = 'stand';
       this.paintLight();
+      this.density();
       this.settleOnStand();
       return;
     }
-    this.react('sad');
-    window.setTimeout(() => {
-      // しょんぼりした後に、まだ駒台へ帰っていなければ帰る（その間に次の問題へ進んでいたら update が帰している）
-      if (this.where !== 'board' || this.streak !== 0) return;
-      this.where = 'stand';
-      this.paintLight();
-      this.clip(false);
-      void this.travel(this.standSpot(), 1100).then(() => this.density());
-    }, 1400);
+    void this.failShow(was, lost);
   }
 
   /** 結果が出た：しばらく触らなければ眠る */
@@ -284,7 +313,7 @@ export class GhostView {
   }
 
   private relayout(): void {
-    if (this.spirit.classList.contains('traveling') || this.spirit.classList.contains('growing')) return;
+    if (['traveling', 'growing', 'shrinking'].some((c) => this.spirit.classList.contains(c))) return;
     if (this.where === 'stand') this.place(this.standSpot());
     else if (this.king) this.place(this.spotNow());
   }
@@ -292,6 +321,7 @@ export class GhostView {
   private settleOnStand(): void {
     this.clip(false);
     this.takeover();
+    this.spirit.classList.remove('shrinking');
     this.place(this.standSpot());
     this.pose.style.opacity = String(this.rest);
     this.setFace('idle');
@@ -303,8 +333,8 @@ export class GhostView {
     this.clip(true);
   }
 
-  private paintLight(): void {
-    const st = this.streak;
+  /** 照明を灯す。st: 見せる連チャン（逃げられて魂が抜けていく間は、抜けるたびに冷めていく） */
+  private paintLight(st = this.streak): void {
     const light = this.light;
     light.classList.toggle('rainbow', st >= MAX_STREAK);
     const frame = this.host.board.closest<HTMLElement>('.board-area');
@@ -369,8 +399,11 @@ export class GhostView {
     return s.animate(this.pose, [{ transform: cs.transform, opacity: Number(cs.opacity), filter: cs.filter }, frame], { duration, easing, fill: 'forwards' });
   }
 
-  /** 今いる所から、ふわふわ移動する。進む向きを向き、着いたら玉のほうを向く */
-  private async travel(to: Spot, ms: number, peek = true): Promise<void> {
+  /**
+   * 今いる所から、ふわふわ移動する。進む向きを向き、着いたら玉のほうを向く。
+   * face: 移動中の顔（null なら変えない）。trudge: しょんぼり、垂れ下がってとぼとぼ進む（着いても顔は戻さない）
+   */
+  private async travel(to: Spot, ms: number, o: { face?: Face | null; trudge?: boolean } = {}): Promise<void> {
     if (reducedMotion()) {
       this.place(to);
       return;
@@ -380,16 +413,27 @@ export class GhostView {
     this.spirit.style.setProperty('--travel', `${ms}ms`);
     this.spirit.classList.add('traveling');
     this.place(to, to.left > now.left);
-    if (peek) this.setFace('peek');
+    const face = o.face === undefined ? 'peek' : o.face;
+    if (face) this.setFace(face);
+    const sag = this.rest * 0.6;
     void s.animate(
       this.pose,
-      [from, { transform: 'rotate(-5deg) translateY(-3%)', offset: 0.25 }, { transform: 'rotate(5deg)', offset: 0.5 }, { transform: 'rotate(-4deg) translateY(-3%)', offset: 0.75 }, this.restFrame()],
-      { duration: ms, easing: 'ease-in-out' },
+      o.trudge
+        ? [
+            from,
+            { transform: 'translateY(6%) rotate(-3deg) scale(.95)', opacity: sag, offset: 0.25 },
+            { transform: 'translateY(9%) rotate(2deg) scale(.94)', opacity: sag, offset: 0.5 },
+            { transform: 'translateY(6%) rotate(-2deg) scale(.95)', opacity: sag, offset: 0.75 },
+            { transform: 'translateY(5%) scale(.96)', opacity: sag },
+          ]
+        : [from, { transform: 'rotate(-5deg) translateY(-3%)', offset: 0.25 }, { transform: 'rotate(5deg)', offset: 0.5 }, { transform: 'rotate(-4deg) translateY(-3%)', offset: 0.75 }, this.restFrame()],
+      { duration: ms, easing: 'ease-in-out', fill: o.trudge ? 'forwards' : 'none' },
     );
     await s.wait(ms);
     this.spirit.classList.remove('traveling');
     if (!s.active) return;
     this.flip.classList.toggle('right', to.faceRight);
+    if (o.trudge) return;
     await s.wait(300);
     if (s.active) this.setFace('idle');
   }
@@ -490,6 +534,107 @@ export class GhostView {
     }
   }
 
+  // ---- 逃げられた ----
+
+  /**
+   * 逃げられた：しょんぼりして、食べた魂が1つずつ体から抜けていく（抜けるたびにしぼみ、照明も冷める）。
+   * 駒台の大きさまでしぼんだら、とぼとぼ駒台へ帰ってため息をつく。
+   * 途中で次の問題へ進んだら、update が駒台へ帰す（takeover でこの演出は止まる）
+   */
+  private async failShow(was: number, lost: (SoulLook | 'rainbow')[]): Promise<void> {
+    const { s, from } = this.takeover();
+    this.setFace('sad');
+    void s.animate(this.pose, [from, { transform: 'translateY(4%) scale(.96)', opacity: this.rest * 0.75 }], { duration: 600, easing: 'ease-in-out', fill: 'forwards' });
+    await s.wait(700);
+    const sizes = deflateSizes(was);
+    const gap = Math.min(340, 2000 / Math.max(1, sizes.length));
+    for (const [i, size] of sizes.entries()) {
+      if (!s.active) return;
+      this.releaseSoul(s, lost[lost.length - 1 - i] ?? PLAIN_LOOK);
+      this.host.sounds.release(i, sizes.length);
+      this.paintLight(was - i - 1);
+      this.shrinkTo(size, gap);
+      void s
+        .animate(this.pose, [{ transform: 'translateY(4%) scale(.96)' }, { transform: 'translateY(2%) scale(1.03, .9)', offset: 0.3 }, { transform: 'translateY(4%) scale(.96)' }], { duration: gap * 0.9, easing: 'ease-out' });
+      await s.wait(gap);
+    }
+    await s.wait(450);
+    if (!s.active || this.streak !== 0) return;
+    this.where = 'stand';
+    this.paintLight();
+    this.clip(false);
+    await this.travel(this.standSpot(), 1500, { face: 'sad', trudge: true });
+    // travel が新しい scope を作るので、続きはそちらで見る
+    const t = this.scope;
+    if (!t.active || this.where !== 'stand') return;
+    this.density();
+    this.sigh(t);
+    this.host.sounds.sigh();
+    await t.animate(this.pose, [{ transform: 'translateY(5%) scale(.96)', opacity: this.rest * 0.6 }, { transform: 'translateY(7%) scale(1.04, .9)', opacity: this.rest * 0.7, offset: 0.4 }, { transform: 'translateY(4%) scale(.97)', opacity: this.rest * 0.8 }], {
+      duration: 900,
+      easing: 'ease-in-out',
+      fill: 'forwards',
+    });
+    await t.wait(1200);
+    if (!t.active) return;
+    await this.poseTo(t, this.restFrame(), 800, 'ease-in-out');
+    if (t.active) this.setFace('idle');
+  }
+
+  /** 体から魂が1つ抜けて、ゆらゆら上っていって消える */
+  private releaseSoul(s: AnimationScope, look: SoulLook | 'rainbow'): void {
+    const c = this.cells();
+    const r = this.local(this.pose.getBoundingClientRect());
+    const p = { x: r.left + r.width * (0.4 + Math.random() * 0.2), y: r.top + r.height * 0.45 };
+    const el = this.makeSoul(s, p, c.w * 0.95, look);
+    const sway = (Math.random() < 0.5 ? -1 : 1) * c.w * 0.35;
+    void this.soulTo(
+      s,
+      el,
+      [
+        { ...p, scale: 0.3, opacity: 0 },
+        { x: p.x + sway, y: p.y - c.h * 0.8, scale: 0.9, opacity: 0.9, offset: 0.3 },
+        { x: p.x - sway, y: p.y - c.h * 1.7, scale: 0.85, opacity: 0.6, offset: 0.65 },
+        { x: p.x + sway * 0.5, y: p.y - c.h * 2.6, scale: 0.7, opacity: 0 },
+      ],
+      { duration: 1400, easing: 'ease-out' },
+    ).then(() => el.remove());
+  }
+
+  /** 魂が抜けた分だけ、その場で小さくなる（玉のそばのまま） */
+  private shrinkTo(size: number, ms: number): void {
+    this.spirit.style.setProperty('--shrink', `${Math.max(200, ms)}ms`);
+    this.spirit.classList.add('shrinking');
+    this.place(this.spotNow(size));
+    window.clearTimeout(this.shrinkTimer);
+    this.shrinkTimer = window.setTimeout(() => this.spirit.classList.remove('shrinking'), Math.max(200, ms) + 50);
+  }
+
+  /** 駒台に着いて、はぁ…とため息の煙を吐く */
+  private sigh(s: AnimationScope): void {
+    const r = this.local(this.pose.getBoundingClientRect());
+    const left = this.flip.classList.contains('right');
+    const p = { x: r.left + r.width * (left ? 0.75 : 0.25), y: r.top + r.height * 0.55 };
+    const dx = (left ? 1 : -1) * r.width * 0.35;
+    for (let i = 0; i < 3; i++) {
+      const puff = s.track(document.createElement('div'));
+      puff.className = 'haunt-sigh';
+      Object.assign(puff.style, { left: `${p.x}px`, top: `${p.y}px`, width: `${r.width * (0.18 + i * 0.05)}px`, height: `${r.width * (0.18 + i * 0.05)}px` });
+      this.over.appendChild(puff);
+      void s
+        .animate(
+          puff,
+          [
+            { transform: 'translate(-50%, -50%) scale(.3)', opacity: 0 },
+            { transform: `translate(calc(-50% + ${dx * 0.4}px), -60%) scale(.8)`, opacity: 0.75, offset: 0.3 },
+            { transform: `translate(calc(-50% + ${dx}px), -110%) scale(1.3)`, opacity: 0 },
+          ],
+          { duration: 1100, delay: i * 140, easing: 'ease-out', fill: 'backwards' },
+        )
+        .then(() => puff.remove());
+    }
+  }
+
   // ---- 眠る ----
 
   private fallAsleep(): void {
@@ -571,10 +716,12 @@ export class GhostView {
     return { x: r.left + r.width * 0.5, y: r.top + r.height * 0.56 };
   }
 
-  private async swallow(s: AnimationScope, soul: HTMLElement, ms: number): Promise<void> {
+  /** 魂を口に吸い込む。soft: ごちそうの残りなど、続けて食べる小さな魂（音を小さく） */
+  private async swallow(s: AnimationScope, soul: HTMLElement, ms: number, soft = false): Promise<void> {
     const m = this.mouth();
-    await this.soulTo(s, soul, [this.here(soul), { x: m.x, y: m.y, scale: 0.25, opacity: 0.6 }], { duration: ms, easing: 'cubic-bezier(.6,0,.9,.6)' });
+    const ok = await this.soulTo(s, soul, [this.here(soul), { x: m.x, y: m.y, scale: 0.25, opacity: 0.6 }], { duration: ms, easing: 'cubic-bezier(.6,0,.9,.6)' });
     soul.remove();
+    if (ok) this.host.sounds.gulp(soft);
   }
 
   /** 成って詰み：魂がくるっと裏返って、成駒の色に変わる */
@@ -594,6 +741,7 @@ export class GhostView {
         this.grow();
         this.sparkles(s, this.pose.getBoundingClientRect(), 8, this.streak >= 9);
       }
+      this.host.sounds.munch();
       await this.poseTo(s, { transform: 'scale(1.08, .92)', opacity: 1 }, 120);
       await this.poseTo(s, { transform: 'scale(.97, 1.05)', opacity: 1 }, 150);
     }
@@ -677,7 +825,7 @@ export class GhostView {
       this.setFace('eat');
       for (const e of extras) {
         if (!s.active) return;
-        await this.swallow(s, e, 200);
+        await this.swallow(s, e, 200, true);
         void this.poseTo(s, { transform: 'scale(1.06, .94)', opacity: 1 }, 90);
         await s.wait(70);
       }
@@ -779,8 +927,9 @@ export class GhostView {
         await s.wait(200);
         this.setFace('eat');
         const m = this.mouth();
-        await this.soulTo(s, soul, [top, { x: m.x, y: m.y, scale: 0.3, opacity: 0.7 }], { duration: 360, easing: 'cubic-bezier(.5,0,1,.6)' });
+        const ok = await this.soulTo(s, soul, [top, { x: m.x, y: m.y, scale: 0.3, opacity: 0.7 }], { duration: 360, easing: 'cubic-bezier(.5,0,1,.6)' });
         soul.remove();
+        if (ok) this.host.sounds.gulp();
         await this.poseTo(s, { transform: 'translateY(2%) scale(1.08, .92)', opacity: 1 }, 140);
         return;
       }
@@ -794,7 +943,7 @@ export class GhostView {
         this.setFace('eat');
         for (const e of kids) {
           if (!s.active) return;
-          await this.swallow(s, e, 240);
+          await this.swallow(s, e, 240, true);
           void this.poseTo(s, { transform: 'scale(1.07, .93)', opacity: 1 }, 100);
           await s.wait(110);
         }
@@ -821,7 +970,7 @@ export class GhostView {
         );
         this.setFace('eat');
         await this.poseTo(s, { transform: 'scale(1.1)', opacity: 1, filter: 'brightness(1.3)' }, 200);
-        await Promise.all(kids.map((e, i) => s.wait(i * 35).then(() => this.swallow(s, e, 260))));
+        await Promise.all(kids.map((e, i) => s.wait(i * 35).then(() => this.swallow(s, e, 260, true))));
         return;
       }
     }

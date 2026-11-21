@@ -130,7 +130,9 @@ export class App {
       onHand: (c, t) => this.onHand(c, t),
       onReplay: (dir) => this.stepReview(dir),
       onLand: (s) => this.sound.land(s),
+      ghostSounds: this.sound,
     });
+    this.board.setGhost(settings.ghost);
     this.root.querySelector('.app-main')!.appendChild(this.board.el);
     // 詰みの演出中に盤をタップしたら、演出の終わりを待たずに結果のカードを出す
     this.board.el.addEventListener('pointerdown', () => {
@@ -403,21 +405,22 @@ export class App {
       // 玉が沈む瞬間に、玉から魂が抜けて幽霊が食べる。カードは詰みの演出の後に出し、食べる演出はその間も続く
       void this.board
         .mate(rare, () => {
-          this.sound.mate(rare);
-          this.board.ghost.mate(ghost);
+          // 連チャンで響きが上がるのは、幽霊が育つのが見えているときだけ
+          this.sound.mate(rare, this.board.ghost ? ghost.after : 0);
+          this.board.ghost?.mate(ghost);
         })
         .then(() => this.openResultDialog(seq));
     } else {
       this.loseStreak();
       setTimeout(() => this.openResultDialog(seq), FAILURE_DIALOG_DELAY_MS);
     }
-    this.board.ghost.sleepLater();
+    this.board.ghost?.sleepLater();
   }
 
   /** 不正解・ギブアップ：連チャンが切れ、幽霊はしょんぼりして駒台へ帰る */
   private loseStreak(): void {
     this.streak = 0;
-    this.board.ghost.fail();
+    this.board.ghost?.fail();
   }
 
   private openResultDialog(seq: number): void {
@@ -578,7 +581,7 @@ export class App {
         if (this.problem) this.history.record(this.problem.id, 'giveup');
         this.viewedAnswer = true;
         this.loseStreak();
-        this.board.ghost.sleepLater();
+        this.board.ghost?.sleepLater();
         // 自分で解答を見ると決めたので、結果のカードは出さずにすぐ解答の振り返りにする
         this.resultSeq++;
         this.phase = {
@@ -865,7 +868,8 @@ export class App {
         <fieldset><legend>出題する手数</legend><div class="chips">${lengths}</div></fieldset>
         <fieldset><legend>出題順序</legend>${orders}</fieldset>
         <label class="radio"><input type="checkbox" name="showLength"${s.showLength ? ' checked' : ''}>解答中に詰み手数を表示する</label>
-        <label class="radio"><input type="checkbox" name="sound"${s.sound ? ' checked' : ''}>駒音を鳴らす</label>
+        <label class="radio"><input type="checkbox" name="sound"${s.sound ? ' checked' : ''}>効果音を鳴らす</label>
+        <label class="radio"><input type="checkbox" name="ghost"${s.ghost ? ' checked' : ''}>幽霊を出す</label>
         <fieldset><legend>評価関数</legend>
           <label class="radio"><input type="radio" name="variant" value="mini"${s.variant === 'mini' ? ' checked' : ''}>つようら王11mini（標準）</label>
           <label class="radio"><input type="radio" name="variant" value="micro"${s.variant === 'micro' ? ' checked' : ''}>つようら王11micro（軽量）</label>
@@ -892,8 +896,14 @@ export class App {
       showLength: form.querySelector<HTMLInputElement>('input[name="showLength"]')!.checked,
       variant: form.querySelector<HTMLInputElement>('input[name="variant"]:checked')?.value === 'micro' ? 'micro' : 'mini',
       sound: form.querySelector<HTMLInputElement>('input[name="sound"]')!.checked,
+      ghost: form.querySelector<HTMLInputElement>('input[name="ghost"]')!.checked,
     };
     this.sound.enabled = next.sound;
+    if (next.ghost !== this.settings.ghost) {
+      // 出し直した幽霊は駒台から始めるので、連チャンも数え直す
+      this.streak = 0;
+      this.board.setGhost(next.ghost);
+    }
     const variantChanged = next.variant !== this.settings.variant;
     const orderChanged = next.order !== this.settings.order || next.lengths.join() !== this.settings.lengths.join();
     this.settings = next;
