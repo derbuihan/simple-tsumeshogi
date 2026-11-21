@@ -67,6 +67,16 @@ describe('AnimationScope', () => {
     expect(scope.signal.aborted).toBe(true);
   });
 
+  it('最後まで再生した後のアニメーションも cancel で取り消す（fill: forwards の見た目を残さない）', async () => {
+    const scope = new AnimationScope();
+    const el = fakeElement();
+    const done = scope.animate(el, frames, { duration: 100, fill: 'forwards' });
+    el.animations[0].finish();
+    await done;
+    scope.cancel();
+    expect(el.animations[0].cancel).toHaveBeenCalledTimes(1);
+  });
+
   it('cancel の後の animate は再生せずに false を返す', async () => {
     const scope = new AnimationScope();
     scope.cancel();

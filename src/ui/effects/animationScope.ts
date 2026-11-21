@@ -18,16 +18,16 @@ export class AnimationScope {
     return !this.signal.aborted;
   }
 
-  /** 再生して登録する。最後まで再生されたら true、cancel されたら（途中で中断されても）false */
+  /**
+   * 再生して登録する。最後まで再生されたら true、cancel されたら（途中で中断されても）false。
+   * 終わった後も登録したままにする（fill: 'forwards' のアニメーションは終わっても見た目に効き続けるので、cancel で取り消せるように）
+   */
   animate(el: Element, frames: Keyframe[], options: KeyframeAnimationOptions): Promise<boolean> {
     if (!this.active) return Promise.resolve(false);
     const animation = el.animate(frames, options);
     this.animations.add(animation);
     return animation.finished.then(
-      () => {
-        this.animations.delete(animation);
-        return this.active;
-      },
+      () => this.active,
       () => false,
     );
   }
