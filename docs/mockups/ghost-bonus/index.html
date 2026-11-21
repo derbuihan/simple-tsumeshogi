@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>魂を食べて育つ幽霊のサンプル</title>
+    <link rel="preload" href="/fonts/noto-serif-jp-pieces.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body>
+    <!-- アプリと同じ #app の枠に本物の BoardView を置き、盤の木目と駒の間に幽霊の層を差し込む -->
+    <div id="app">
+      <header class="app-header">
+        <div class="problem-info">
+          <span class="badge">3手詰</span>
+          <span class="pid">問題 001-0</span>
+          <span class="side">攻方 先手</span>
+          <span class="tag status-untried">初挑戦</span>
+        </div>
+      </header>
+      <main class="app-main"></main>
+      <section class="mock-panel">
+        <div class="mock-row">
+          <span class="mock-label">通し</span>
+          <button type="button" data-act="marathon" class="primary">▶ 0連から10連まで続けて解く</button>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">1問</span>
+          <button type="button" data-act="solve">この問題を解く</button>
+          <button type="button" data-act="step">次の1手</button>
+          <button type="button" data-act="next">次の問題</button>
+          <button type="button" data-act="fail">逃げられた</button>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">連チャン</span>
+          <span class="streak" role="radiogroup" aria-label="連続正解"><button type="button" data-streak="0">0</button><button type="button" data-streak="1">1</button><button type="button" data-streak="2">2</button><button type="button" data-streak="3">3</button><button type="button" data-streak="4">4</button><button type="button" data-streak="5">5</button><button type="button" data-streak="6">6</button><button type="button" data-streak="7">7</button><button type="button" data-streak="8">8</button><button type="button" data-streak="9">9</button><button type="button" data-streak="10">10</button></span>
+        </div>
+        <div class="mock-row">
+          <span class="mock-label">反応</span>
+          <button type="button" data-react="lick">指す</button>
+          <button type="button" data-react="surprised">取る</button>
+          <button type="button" data-react="sparkle">成る</button>
+          <button type="button" data-react="peek">打つ</button>
+          <button type="button" data-react="nervous">応手</button>
+          <button type="button" data-act="sleep">眠らせる</button>
+        </div>
+        <div class="mock-row"><span class="mock-label">詰め方</span><span class="mock-finish mock-note"></span></div>
+        <div class="mock-row"><span class="mock-label">食べ方</span><span class="mock-last mock-note">（まだ詰ませていない）</span></div>
+      </section>
+      <!-- 結果のカード（アプリと同じ作り） -->
+      <div class="overlay sheet" hidden></div>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
