@@ -1,5 +1,6 @@
 import { EngineClient } from './engine/EngineClient';
 import { MateClient } from './engine/MateClient';
+import { finishOf } from './game/finish';
 import type { Problem } from './game/problem';
 import { successFeats, type Feat } from './game/feats';
 import { Session, type FailureReason } from './game/session';
@@ -14,6 +15,7 @@ import { canPromoteType, inPromotionZone, pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
+import { streakAfterSuccess } from './ui/ghost/rules';
 import { Sound } from './ui/sound';
 
 /** 挑戦の結果 */
@@ -94,6 +96,10 @@ export class App {
   private dialogOpenedAt = 0;
   /** 今出しているダイアログの HTML（同じなら置き直さず、出てくるアニメーションを繰り返さない） */
   private overlayHtml = '';
+  /** 連チャン（盤の裏の幽霊が育つ）。アプリを開いている間だけ数え、保存しない */
+  private streak = 0;
+  /** この起動中に自力で解いた問題（再挑戦で同じ問題を解いても、連チャンは伸ばさない） */
+  private readonly solvedThisSession = new Set<string>();
 
   private readonly board: BoardView;
   private readonly sound: Sound;
@@ -387,10 +393,31 @@ export class App {
     this.phase = { kind: 'result', result, review: { line: 'mine', step: this.lastAttempt.length }, dialog: 'pending' };
     if (result.kind === 'success') {
       const rare = result.feats.some((f) => f.rare);
-      void this.board.mate(rare, () => this.sound.mate(rare)).then(() => this.openResultDialog(seq));
+      const problem = this.problem!;
+      const moves = this.lastAttempt;
+      // 連チャン：自力で、この起動中に初めて解いた問題だけ数える
+      const before = this.streak;
+      this.streak = streakAfterSuccess(before, this.viewedAnswer, this.solvedThisSession.has(problem.id));
+      if (!this.viewedAnswer) this.solvedThisSession.add(problem.id);
+      const ghost = { before, after: this.streak, finish: finishOf(parseSfen(problem.sfen), moves), length: moves.length };
+      // 玉が沈む瞬間に、玉から魂が抜けて幽霊が食べる。カードは詰みの演出の後に出し、食べる演出はその間も続く
+      void this.board
+        .mate(rare, () => {
+          this.sound.mate(rare);
+          this.board.ghost.mate(ghost);
+        })
+        .then(() => this.openResultDialog(seq));
     } else {
+      this.loseStreak();
       setTimeout(() => this.openResultDialog(seq), FAILURE_DIALOG_DELAY_MS);
     }
+    this.board.ghost.sleepLater();
+  }
+
+  /** 不正解・ギブアップ：連チャンが切れ、幽霊はしょんぼりして駒台へ帰る */
+  private loseStreak(): void {
+    this.streak = 0;
+    this.board.ghost.fail();
   }
 
   private openResultDialog(seq: number): void {
@@ -550,6 +577,8 @@ export class App {
         this.lastAttempt = this.session?.moves.slice() ?? [];
         if (this.problem) this.history.record(this.problem.id, 'giveup');
         this.viewedAnswer = true;
+        this.loseStreak();
+        this.board.ghost.sleepLater();
         // 自分で解答を見ると決めたので、結果のカードは出さずにすぐ解答の振り返りにする
         this.resultSeq++;
         this.phase = {

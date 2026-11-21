@@ -5,6 +5,7 @@ import { HAND_TYPES, opposite, type Color, type HandType, type Position } from '
 import { AnimationScope } from './effects/animationScope';
 import { playMate } from './effects/mateEffects';
 import { playStep, type BoardFx } from './effects/pieceEffects';
+import { GhostView } from './ghost/ghostView';
 import { pieceHtml } from './pieceDom';
 import type { LandSound } from './sound';
 import { detectStep } from './step';
@@ -61,6 +62,8 @@ export class BoardView {
   private landed: Promise<void> = Promise.resolve();
   /** 演出に渡す盤の情報 */
   private readonly fx: BoardFx;
+  /** 盤の裏の幽霊（連チャン・詰み・逃げられた・眠るは App から呼ぶ） */
+  readonly ghost: GhostView;
 
   constructor(private readonly handlers: BoardViewHandlers) {
     this.el = document.createElement('div');
@@ -97,6 +100,8 @@ export class BoardView {
       cell.dataset.display = String(d);
       this.grid.insertBefore(cell, this.pieces);
     }
+    // マスは .board の子の並び順で探すので、幽霊の層はマスを作った後に入れる
+    this.ghost = new GhostView({ board: this.grid, pieces: this.pieces, stand: this.bottomHand, enemyStand: this.topHand });
     this.grid.addEventListener('click', (e) => {
       if (this.model?.replay) {
         // 盤を反転していても、画面上の左右で決める
@@ -146,19 +151,21 @@ export class BoardView {
       this.key = key;
       this.scope.cancel();
       this.scope = new AnimationScope();
-      const step =
-        prev && prev.bottom === model.bottom && !reducedMotion()
-          ? detectStep(prev.position, model.position, model.lastMove)
-          : null;
+      // 1手進んだか（幽霊は動きを減らす設定でも玉を追うので、演出の有無とは別に求める）
+      const stepped = prev && prev.bottom === model.bottom ? detectStep(prev.position, model.position, model.lastMove) : null;
+      const step = reducedMotion() ? null : stepped;
       // 駒打ちの移動元は、置き直す前の駒台の駒の位置
       const dropFrom = step?.move.kind === 'drop' ? this.handPiece(step.mover, step.move.type)?.getBoundingClientRect() : undefined;
       const handBefore = step ? prev!.position.hands[step.mover] : null;
       this.renderPieces(model.position, model.bottom);
       this.renderHand(this.bottomHand, model.position, model.bottom, '攻方', true);
       this.renderHand(this.topHand, model.position, opposite(model.bottom), '玉方', false);
-      this.landed = step
-        ? playStep(this.scope, this.fx, step, { dropFrom, handBefore: handBefore!, onLand: (s) => this.handlers.onLand(s) }).catch(console.error)
-        : Promise.resolve();
+      this.ghost.update(model.position, model.bottom, !!stepped, model.replay);
+      const onLand = (s: LandSound) => {
+        this.handlers.onLand(s);
+        this.ghost.land(s);
+      };
+      this.landed = step ? playStep(this.scope, this.fx, step, { dropFrom, handBefore: handBefore!, onLand }).catch(console.error) : Promise.resolve();
     }
     this.renderMarks(model);
   }

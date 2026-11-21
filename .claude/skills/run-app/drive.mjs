@@ -156,8 +156,9 @@ try {
     result.log = (await ev('window.__log')).filter((e) => e[1] !== 'pause');
     result.pauses = (await ev('window.__log')).filter((e) => e[1] === 'pause').length;
     // 終わらないまま残っている Animation（あれば一時的な DOM が取り除かれない）
+    // 幽霊（.haunt・.haunt-over）は結果のカードと並行して動き続けるので数えない
     result.unresolved = await ev(
-      `window.__all.filter((r) => r.done === 'pending').map((r) => r.cls + ' ' + r.an.playState + ' t=' + Math.round(r.an.currentTime) + ' pending=' + r.an.pending)`,
+      `window.__all.filter((r) => r.done === 'pending' && !r.an.effect?.target?.closest?.('.haunt, .haunt-over')).map((r) => r.cls + ' ' + r.an.playState + ' t=' + Math.round(r.an.currentTime) + ' pending=' + r.an.pending)`,
     );
     result.leftover = await ev(`[...document.querySelectorAll('.pieces > :not(.pc)')].map((n) => n.className)`);
     // カードを閉じて振り返り。←→ を連打する
@@ -166,7 +167,14 @@ try {
     result.mash = await ev(`(async () => { ${helpers}
       const key = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
       for (const k of ['ArrowLeft', 'ArrowLeft', 'ArrowLeft', 'ArrowRight', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'ArrowRight']) { key(k); await new Promise((r) => setTimeout(r, 25)); }
-      const count = () => ({ fx: fxCount(), frameAnims: document.querySelector('.board-frame').getAnimations().length, boardAnims: document.querySelector('.board-area').getAnimations({ subtree: true }).length });
+      // 幽霊のふわふわ（CSS のアニメーション）と、照明の移り変わり（box-shadow の transition）は数えない
+      const notGhost = (a) => !a.effect?.target?.closest?.('.haunt, .haunt-over') && !(a instanceof CSSTransition);
+      const count = () => ({
+        fx: fxCount(),
+        frameAnims: document.querySelector('.board-frame').getAnimations().filter(notGhost).length,
+        boardAnims: document.querySelector('.board-area').getAnimations({ subtree: true }).filter(notGhost).length,
+        souls: document.querySelectorAll('.soul').length,
+      });
       const right = count();
       await new Promise((r) => setTimeout(r, 1000));
       return { right, after1s: count() };

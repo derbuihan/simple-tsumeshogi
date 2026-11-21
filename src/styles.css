@@ -196,7 +196,9 @@ button {
   background: linear-gradient(160deg, #d9ae62, #c99a4e);
   border-radius: 6px;
   padding: var(--frame-pad);
-  box-shadow: 0 2px 6px rgba(60, 35, 10, 0.25);
+  /* --frame-glow：連チャンの照明（src/ui/ghost/ghostView.ts が .board-area に入れる） */
+  box-shadow: var(--frame-glow, 0 2px 6px rgba(60, 35, 10, 0.25));
+  transition: box-shadow 1.2s ease;
 }
 .board {
   position: relative;
