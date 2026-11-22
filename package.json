@@ -17,6 +17,7 @@
     "build:index": "node scripts/build-problem-index.mjs .cache/regen-solutions/public/data public/problems-index.json",
     "fetch:eval": "bash scripts/fetch-eval.sh",
     "build:engine": "bash engine/build.sh",
+    "build:icons": "python3 scripts/build-icons.py",
     "smoke:engine": "node scripts/engine-smoke.mjs",
     "upload:problems": "bash scripts/upload-problems.sh"
   },

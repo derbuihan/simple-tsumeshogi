@@ -81,6 +81,7 @@
 | `src/ui/ghost/ghost.css` | 幽霊・魂・照明・Zzz の見た目 |
 | `src/game/finish.ts` | 詰め方の判定（`tests/finish.test.ts`） |
 | `public/ghost/*.webp` | 幽霊の表情と魂の絵（Codex の画像生成で作ったオリジナルの絵。512px・合計約 290KB） |
+| `assets/app-icon.png` | アプリアイコンの原画（1024px・Codex の画像生成）。幽霊は隠し機能なので主役にせず、「詰」の駒の右肩から小さくのぞかせるだけにした。`npm run build:icons`（`scripts/build-icons.py`・Pillow が必要）で `public/icons/` と `favicon.ico` を作り直す。`favicon.svg` は手描きで、幽霊は描かない |
 
 - 幽霊の層は `.board` の子に入れる。BoardView はマスを `.board` の子の並び順で探すので、マスの後ろに入れる。
 - 視差効果を減らす設定では動かさず、居場所と大きさだけを変える。

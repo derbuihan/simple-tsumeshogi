@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- 将棋の駒の形 -->
-  <path d="M32 3 L50 11 L58 61 L6 61 L14 11 Z" fill="#e8c27a" stroke="#6b4a1f" stroke-width="3" stroke-linejoin="round"/>
-  <text x="32" y="48" text-anchor="middle" font-size="30" font-weight="bold" font-family="'Hiragino Mincho ProN','Yu Mincho','Noto Serif JP',serif" fill="#3a2a10">詰</text>
+  <!-- アプリアイコン（assets/app-icon.png）をタブ用に簡略化したもの。幽霊は小さすぎて見えないので描かない -->
+  <rect width="64" height="64" rx="14" fill="#cb0101"/>
+  <path d="M32 6 L47 12.5 L53 57 L11 57 L17 12.5 Z" fill="#f0c27e" stroke="#8a5a24" stroke-width="2" stroke-linejoin="round"/>
+  <text x="32" y="47" text-anchor="middle" font-size="27" font-weight="bold" font-family="'Hiragino Mincho ProN','Yu Mincho','Noto Serif JP',serif" fill="#1a1208">詰</text>
 </svg>
