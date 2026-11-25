@@ -49,6 +49,8 @@ const FAILURE_TEXT: Record<FailureReason | 'giveup', string> = {
 
 /** 不正解のとき、結果のカードを出すまでの時間（最後の局面を見せてから出す）。正解のときは詰みの演出が終わってから出す */
 const FAILURE_DIALOG_DELAY_MS = 300;
+/** 不正解のとき、玉方が最後に応じた手を見せてから、不正解の表示（しょんぼり・結果）に移るまでの間 */
+const FAILURE_AFTER_REPLY_MS = 600;
 /** カードが出てすぐのタップ（盤を連打していた指）で、外側タップとして閉じないようにする */
 const DIALOG_TAP_GUARD_MS = 300;
 
@@ -345,6 +347,12 @@ export class App {
       const wait = delay - (performance.now() - started);
       if (wait > 0 && state.kind !== 'success') await new Promise((r) => setTimeout(r, wait));
       if (this.session !== session) return;
+      // 不正解でも玉方は先に応じている。その手を盤に見せて、少し間を置いてから結果を出す
+      if (state.kind === 'failure' && session.moves.length % 2 === 0) {
+        this.render();
+        await new Promise((r) => setTimeout(r, FAILURE_AFTER_REPLY_MS));
+        if (this.session !== session) return;
+      }
       this.afterState(state);
     } catch (e) {
       this.fail(e);
