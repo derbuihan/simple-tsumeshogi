@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_SETTINGS, loadSettings } from '../src/settings';
+import { DEFAULT_SETTINGS, loadSettings, saveCursor, saveSettings } from '../src/settings';
 
 const store = new Map<string, string>();
 vi.stubGlobal('localStorage', {
@@ -26,5 +26,16 @@ describe('設定の読み込み', () => {
     expect(loadSettings().ghost).toBe(false);
     saved({ ghost: 'no' });
     expect(loadSettings().ghost).toBe(true);
+  });
+});
+
+describe('設定の保存', () => {
+  it('localStorage に書けなくても例外を投げない', () => {
+    const setItem = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    expect(() => saveSettings(DEFAULT_SETTINGS)).not.toThrow();
+    expect(() => saveCursor({ current: { '3': 1 } })).not.toThrow();
+    setItem.mockRestore();
   });
 });

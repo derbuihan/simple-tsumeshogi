@@ -50,7 +50,11 @@ export function loadSettings(): Settings {
 }
 
 export function saveSettings(s: Settings): void {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch {
+    /* 保存できなくても（容量超過・プライベートモード）、この起動中は画面の設定のまま使える */
+  }
 }
 
 export function loadCursor(): Cursor {
@@ -64,5 +68,9 @@ export function loadCursor(): Cursor {
 }
 
 export function saveCursor(c: Cursor): void {
-  localStorage.setItem(CURSOR_KEY, JSON.stringify(c));
+  try {
+    localStorage.setItem(CURSOR_KEY, JSON.stringify(c));
+  } catch {
+    /* 保存できなくても出題は続けられる（次の起動で巻の位置が戻るだけ） */
+  }
 }
