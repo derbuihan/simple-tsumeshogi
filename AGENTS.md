@@ -46,6 +46,8 @@ simple-eigo, simple-whowhy and simple-tsumeshogi keep these parts the same. When
 
 This app has no header combo and no `ComboBurst`: the streak is shown by the ghost (`src/ui/ghost/`). It also sets COOP/COEP in `_headers`, which the engine's SharedArrayBuffer needs; the other apps leave them out because they load cross-origin resources.
 
-## Commits and Pull Requests
+## Commits
 
-Use short imperative subjects (for example, `Add review step keys`) and keep each commit focused. A pull request should explain the behavior change, list verification commands and results, and include screenshots for UI changes.
+Work directly on `main`. This is a one-person project, so do not create feature branches or pull requests: commit each change straight to `main`. Pushing `main` deploys to production, so push only when asked.
+
+Use short imperative subjects (for example, `Add review step keys`) and keep each commit focused.
