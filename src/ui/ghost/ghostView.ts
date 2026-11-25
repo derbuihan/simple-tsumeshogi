@@ -211,8 +211,11 @@ export class GhostView {
     void this.mateShow(m);
   }
 
-  /** 逃げられた（ギブアップも）：しょんぼりして駒台へ帰る */
-  fail(): void {
+  /**
+   * 逃げられた（ギブアップも）：しょんぼりして駒台へ帰る。
+   * 魂が抜けていく演出（抜ける音・ため息）を始めたら true。しょんぼりするだけで音を鳴らさないときは false
+   */
+  fail(): boolean {
     // 食べる途中（まだ育っていない）なら、その分は無かったことにする
     const was = this.pending ?? this.streak;
     this.pending = null;
@@ -220,7 +223,7 @@ export class GhostView {
     this.eaten = [];
     if (this.where === 'stand' && was === 0) {
       if (!reducedMotion()) this.react('sad');
-      return;
+      return false;
     }
     this.streak = 0;
     if (reducedMotion()) {
@@ -228,9 +231,10 @@ export class GhostView {
       this.paintLight();
       this.density();
       this.settleOnStand();
-      return;
+      return false;
     }
     void this.failShow(was, lost);
+    return true;
   }
 
   /** 結果が出た：しばらく触らなければ眠る */

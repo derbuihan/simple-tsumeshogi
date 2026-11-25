@@ -15,6 +15,7 @@ import { canPromoteType, inPromotionZone, pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
+import { loadReviewHintSeen, saveReviewHintSeen } from './ui/reviewHint';
 import { streakAfterSuccess } from './ui/ghost/rules';
 import { Sound } from './ui/sound';
 
@@ -109,6 +110,8 @@ export class App {
 
   private readonly board: BoardView;
   private readonly sound: Sound;
+  /** 振り返りの操作（盤の左右のタップ）を一度でも使ったか。使うまでは盤にヒントを出す */
+  private reviewHintSeen = loadReviewHintSeen();
   private readonly header: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly overlay: HTMLElement;
@@ -430,7 +433,10 @@ export class App {
   /** 不正解・ギブアップ：連チャンが切れ、幽霊はしょんぼりして駒台へ帰る */
   private loseStreak(): void {
     this.streak = 0;
-    this.board.ghost?.fail();
+    // 幽霊の演出で魂が抜けていく音が鳴らないとき（出さない設定・連チャン0で駒台にいる・動きを減らす設定）は、
+    // 代わりに短い下降音を鳴らす。不正解が音で伝わらないことがないようにする
+    const ghostSounds = this.board.ghost?.fail() ?? false;
+    if (!ghostSounds) this.sound.miss();
   }
 
   private openResultDialog(seq: number): void {
@@ -667,6 +673,10 @@ export class App {
     const step = Math.max(0, Math.min(max, phase.review.step + dir));
     if (step === phase.review.step) return;
     this.phase = { ...phase, review: { ...phase.review, step } };
+    if (!this.reviewHintSeen) {
+      this.reviewHintSeen = true;
+      saveReviewHintSeen();
+    }
     this.render();
   }
 
@@ -742,6 +752,7 @@ export class App {
       interactive,
       replay: phase.kind === 'result' && phase.dialog === 'closed' && !this.settingsOpen,
       missed: this.isMissedStep(),
+      replayHint: !this.reviewHintSeen,
     });
   }
 

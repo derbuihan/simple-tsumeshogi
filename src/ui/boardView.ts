@@ -27,6 +27,8 @@ export interface BoardViewModel {
   replay: boolean;
   /** 直前の手が詰みを逃した手か（振り返りで、そのマスを赤く示す） */
   missed: boolean;
+  /** 振り返りの操作のヒント（盤の左端に「戻る」、右端に「進む」）を重ねて出すか（盤の位置と大きさは変えない） */
+  replayHint: boolean;
 }
 
 export interface BoardViewHandlers {
@@ -55,6 +57,7 @@ export class BoardView {
   private readonly grid: HTMLElement;
   private readonly frame: HTMLElement;
   private readonly pieces: HTMLElement;
+  private readonly replayHint: HTMLElement;
   private model: BoardViewModel | null = null;
   /** 今置いている駒の局面と向き（同じなら駒を置き直さない） */
   private key = '';
@@ -73,7 +76,7 @@ export class BoardView {
     this.el.innerHTML = `
       <div class="hand hand-top" aria-label="玉方の持ち駒"></div>
       <div class="board-frame">
-        <div class="board" role="grid" aria-label="将棋盤"><div class="pieces" aria-hidden="true"></div></div>
+        <div class="board" role="grid" aria-label="将棋盤"><div class="pieces" aria-hidden="true"></div><div class="replay-hint" aria-hidden="true"><span class="replay-hint__chip">◀ 戻る</span><span class="replay-hint__chip">進む ▶</span></div></div>
       </div>
       <div class="hand hand-bottom" aria-label="攻方の持ち駒"></div>`;
     this.topHand = this.el.querySelector('.hand-top')!;
@@ -81,6 +84,7 @@ export class BoardView {
     this.grid = this.el.querySelector('.board')!;
     this.frame = this.el.querySelector('.board-frame')!;
     this.pieces = this.el.querySelector('.pieces')!;
+    this.replayHint = this.el.querySelector('.replay-hint')!;
     const view = this;
     this.fx = {
       pieces: this.pieces,
@@ -214,9 +218,10 @@ export class BoardView {
 
   /** 選択・移動先・直前の手の印。駒は置き直さずに付け替えるだけ */
   private renderMarks(model: BoardViewModel): void {
-    const { selection, targets, lastMove, interactive, replay, missed } = model;
+    const { selection, targets, lastMove, interactive, replay, missed, replayHint } = model;
     this.el.classList.toggle('interactive', interactive);
     this.el.classList.toggle('replay', replay);
+    this.replayHint.classList.toggle('replay-hint--on', replay && replayHint);
     const lastTo = lastMove ? parseUsiMove(lastMove).to : -1;
     const selectedIndex = selection?.kind === 'board' ? selection.index : -1;
     for (let index = 0; index < 81; index++) {
