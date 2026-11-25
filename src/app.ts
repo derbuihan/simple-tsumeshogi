@@ -15,6 +15,7 @@ import { canPromoteType, inPromotionZone, pieceChar } from './shogi/notation';
 import { parseSfen } from './shogi/sfen';
 import type { Color, HandType, Position } from './shogi/types';
 import { BoardView, type Selection } from './ui/boardView';
+import { loadReviewHintSeen, saveReviewHintSeen } from './ui/reviewHint';
 import { streakAfterSuccess } from './ui/ghost/rules';
 import { Sound } from './ui/sound';
 
@@ -109,6 +110,8 @@ export class App {
 
   private readonly board: BoardView;
   private readonly sound: Sound;
+  /** 振り返りの操作（盤の左右のタップ）を一度でも使ったか。使うまでは盤にヒントを出す */
+  private reviewHintSeen = loadReviewHintSeen();
   private readonly header: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly overlay: HTMLElement;
@@ -670,6 +673,10 @@ export class App {
     const step = Math.max(0, Math.min(max, phase.review.step + dir));
     if (step === phase.review.step) return;
     this.phase = { ...phase, review: { ...phase.review, step } };
+    if (!this.reviewHintSeen) {
+      this.reviewHintSeen = true;
+      saveReviewHintSeen();
+    }
     this.render();
   }
 
@@ -745,6 +752,7 @@ export class App {
       interactive,
       replay: phase.kind === 'result' && phase.dialog === 'closed' && !this.settingsOpen,
       missed: this.isMissedStep(),
+      replayHint: !this.reviewHintSeen,
     });
   }
 

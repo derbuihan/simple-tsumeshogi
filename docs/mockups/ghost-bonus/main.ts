@@ -141,6 +141,7 @@ const model = (position: Position, lastMove: string | null): BoardViewModel => (
   lastMove,
   interactive: false,
   replay: false,
+  replayHint: false,
   missed: false,
 });
 const disp = (i: number) => {

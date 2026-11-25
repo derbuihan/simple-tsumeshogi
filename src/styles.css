@@ -264,6 +264,41 @@ button {
   cursor: pointer;
 }
 
+/*
+  振り返りの操作のヒント。一度手を送るまで、盤の左端の中ほどに「◀ 戻る」、右端に「進む ▶」を重ねて出す（src/ui/reviewHint.ts）。
+  タップする場所にそのまま置く。下端に1行で出すと、最下段の駒（詰まされた玉のこともある）が隠れたので、端の列に小さく置く。
+  盤の上に重ねるだけなので、盤の位置もパネルの高さも変わらない。タップは下のマスが受ける
+*/
+.replay-hint {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 3px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+.replay-hint--on {
+  opacity: 1;
+}
+.replay-hint__chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 72%, transparent);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .replay-hint {
+    transition: none;
+  }
+}
+
 /* 駒の層。タップは下のマスが受ける */
 .pieces {
   position: absolute;
