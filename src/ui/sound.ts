@@ -100,6 +100,19 @@ export class Sound {
     notes.forEach((f, i) => this.tone(t + 0.09 + i * 0.09, f, long ? 1.1 : 0.8, notes.length > 3 ? 0.11 : 0.13));
   }
 
+  /**
+   * 詰みを逃した・ギブアップした（幽霊を出さない設定のとき。出すときは幽霊のため息が鳴る）。
+   * 低く短い2音の下降で、責めない柔らかい音（三角波）。simple-eigo / simple-whowhy の不正解の音と同じ。
+   * 向こうは master が 0.5 なので、音量を半分にして同じ大きさで聞こえるようにする
+   */
+  miss(): void {
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    this.tone(t, 330, 0.12, 0.14, 'triangle');
+    this.tone(t + 0.1, 247, 0.18, 0.14, 'triangle');
+  }
+
   // ---- 盤の裏の幽霊 ----
 
   /** ぱくっ：口に入れた音。音程の落ちる短いポップ。soft は続けて食べる小さな魂 */
@@ -226,10 +239,10 @@ export class Sound {
     osc.stop(t + dur + 0.01);
   }
 
-  private tone(t: number, freq: number, dur: number, vol: number): void {
+  private tone(t: number, freq: number, dur: number, vol: number, type: OscillatorType = 'sine'): void {
     const ctx = this.ctx!;
     const osc = ctx.createOscillator();
-    osc.type = 'sine';
+    osc.type = type;
     osc.frequency.value = freq;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);

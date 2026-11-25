@@ -430,7 +430,10 @@ export class App {
   /** 不正解・ギブアップ：連チャンが切れ、幽霊はしょんぼりして駒台へ帰る */
   private loseStreak(): void {
     this.streak = 0;
-    this.board.ghost?.fail();
+    // 幽霊の演出で魂が抜けていく音が鳴らないとき（出さない設定・連チャン0で駒台にいる・動きを減らす設定）は、
+    // 代わりに短い下降音を鳴らす。不正解が音で伝わらないことがないようにする
+    const ghostSounds = this.board.ghost?.fail() ?? false;
+    if (!ghostSounds) this.sound.miss();
   }
 
   private openResultDialog(seq: number): void {
