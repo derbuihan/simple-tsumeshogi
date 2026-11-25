@@ -92,16 +92,18 @@ describe('Session', () => {
     expect(await s.playAttacker('6f8h')).toEqual({ kind: 'success', moves: 5 });
   });
 
-  it('詰みが見つからなければ不正解（局面は残す）', async () => {
+  it('詰みが見つからなければ不正解（玉方が先に応じる）', async () => {
     const engine = mockEngine({
       '': { checks: ['B*5g', '6h5g+'] },
       '6h5g+': { legal: ['4h5g'], think: { bestmove: '4h5g', score: { kind: 'cp', value: -1200 }, pv: [] } },
     });
-    // 乱数 0 → 猶予なしで、すぐ不正解
+    // 乱数 0 → 猶予なしで不正解。ただし不正解の前に玉方が応じる
     const s = new Session(problem, engine, { random: () => 0 });
     await s.start();
-    expect(await s.playAttacker('6h5g+')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
-    expect(s.moves).toEqual(['6h5g+']);
+    const replies: string[] = [];
+    expect(await s.playAttacker('6h5g+', (m) => replies.push(m))).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
+    expect(s.moves).toEqual(['6h5g+', '4h5g']);
+    expect(replies).toEqual(['4h5g']);
   });
 
   const cp = (value: number, bestmove: string): ThinkResult => ({ bestmove, score: { kind: 'cp', value }, pv: [bestmove] });
@@ -113,7 +115,7 @@ describe('Session', () => {
       '6h5g+ 4h5g': { checks: ['B*6f'] },
       '6h5g+ 4h5g B*6f': { legal: ['5g4h'], think: cp(-2400, '5g4h') },
       '6h5g+ 4h5g B*6f 5g4h': { checks: ['6f8h'] },
-      '6h5g+ 4h5g B*6f 5g4h 6f8h': { legal: ['4h3h'], think: cp(-2300, '4h3h') },
+      '6h5g+ 4h5g B*6f 5g4h 6f8h': { legal: ['4h5h'], think: cp(-2300, '4h5h') },
     });
     // 乱数 0.99 → 最大の猶予（2手）
     const s = new Session(problem, engine, { random: () => 0.99 });
@@ -121,7 +123,8 @@ describe('Session', () => {
     expect((await s.playAttacker('6h5g+')).kind).toBe('attacker-turn');
     expect((await s.playAttacker('B*6f')).kind).toBe('attacker-turn');
     expect(await s.playAttacker('6f8h')).toEqual({ kind: 'failure', reason: 'no-mate', missedAt: 1 });
-    expect(s.moves).toEqual(['6h5g+', '4h5g', 'B*6f', '5g4h', '6f8h']);
+    // 不正解になる手でも、玉方が先に応じる
+    expect(s.moves).toEqual(['6h5g+', '4h5g', 'B*6f', '5g4h', '6f8h', '4h5h']);
   });
 
   it('猶予中に評価値が崩れたら猶予を残していても不正解', async () => {
@@ -308,6 +311,38 @@ describe('Session（詰み専用エンジンで判定）', () => {
       '6h5g+ 4h5h': { checks: ['B*6f'] },
     });
     const solver = mockSolver({ '6h5g+ 4h5g': 'nomate', '6h5g+ 4h5h': 'nomate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
+    await s.start();
+    const replies: string[] = [];
+    await s.playAttacker('6h5g+', (m) => replies.push(m));
+    expect(replies).toEqual(['4h5h']);
+  });
+
+  it('詰まない応手が複数で mini の最善手がその中に無ければ、攻方の評価が最も低い応手で応じる', async () => {
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h', '4h3i'], think: cp(-2500, '4h5g') },
+      // 応手後の局面は攻方の手番（攻方から見た評価）
+      '6h5g+ 4h5h': { think: cp(900, 'B*6f') },
+      '6h5g+ 4h3i': { think: cp(300, 'B*6f') },
+      '6h5g+ 4h3i B*6f': { checks: [] },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'nomate', '6h5g+ 4h3i': 'nomate' });
+    const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
+    await s.start();
+    const replies: string[] = [];
+    await s.playAttacker('6h5g+', (m) => replies.push(m));
+    expect(replies).toEqual(['4h3i']);
+  });
+
+  it('詰まない応手が1つなら、探索せずにその手で応じる', async () => {
+    // '6h5g+ 4h5h' の think が無いので、探索すると mockEngine が例外を投げる
+    const engine = mockEngine({
+      '': { checks: ['6h5g+'] },
+      '6h5g+': { legal: ['4h5g', '4h5h'], think: cp(-2500, '4h5g') },
+      '6h5g+ 4h5h': { checks: [] },
+    });
+    const solver = mockSolver({ '6h5g+ 4h5g': 'mate', '6h5g+ 4h5h': 'nomate' });
     const s = new Session(problem, engine, { mateSolver: solver, random: () => 0.99 });
     await s.start();
     const replies: string[] = [];

@@ -67,6 +67,18 @@ export function graceMoves(score: Score | null, random: number): number {
   return MAX_GRACE;
 }
 
+/** 詰まない応手が複数あるとき、各応手の後の局面を探索する時間（ms）と、調べる応手の最大数 */
+const ESCAPE_EVAL_MS = 80;
+const ESCAPE_EVAL_MAX = 4;
+
+/** 攻方の手番の局面の探索結果を、攻方から見た比べやすい数値にする（大きいほど攻方に有利）。結果なしは 0 */
+function attackerValue(score: Score | null): number {
+  if (!score) return 0;
+  if (score.kind === 'cp') return score.value;
+  const n = Math.abs(score.value);
+  return score.sign === '+' ? 100000 - n : -100000 + n;
+}
+
 export type FailureReason =
   /** 玉方の探索で詰みが見つからない（通常評価値・時間切れ） */
   | 'no-mate'
@@ -104,8 +116,10 @@ export interface SessionOptions {
  *     結論が出なかったとき（時間切れ・メモリ不足）と、詰み専用エンジンが無いときは、
  *     玉方の探索（mini）が「詰まされる」(score mate -N) かで決める
  *   - 玉方の応手は mini の最善手。ただし詰みを逃したときは、詰まないと分かった応手から選ぶ
+ *     （mini の最善手がそうでなければ、各応手を短く探索して攻方の評価が最も低い手）
  *   - 詰みを逃しても、すぐには不正解にせず、mini の評価値に応じて
- *     0〜2手は玉方が応じて続ける（猶予）。猶予を使い切ったら不正解
+ *     0〜2手は玉方が応じて続ける（猶予）。猶予を使い切ったら不正解。
+ *     不正解にする手でも、玉方が先に応じてから不正解を返す（moves の最後は玉方の手）
  *   - 猶予中に本当に詰ませれば成功。猶予中に再び詰みが見つかれば（探索の見落としだった）猶予を取り消して続行
  *   - 同一局面が4回現れたら連続王手の千日手として不正解
  */
@@ -171,6 +185,8 @@ export class Session {
     ]);
     const escapes = verdicts ? legal.filter((m) => verdicts.get(m) === 'nomate') : [];
     const decided = verdicts && (escapes.length > 0 || legal.every((m) => verdicts.get(m) === 'mate'));
+    // 不正解にする場合も、玉方が先に応じる（どの手で逃したか、応手を見て納得できるように）
+    let failNow = false;
     if (decided ? escapes.length === 0 : isMatedScore(result.score)) {
       // 猶予中に詰みが見つかったなら、前の判定は探索の見落としだった
       this.missedAt = null;
@@ -178,24 +194,48 @@ export class Session {
     } else if (this.missedAt === null) {
       this.missedAt = this.moves.length;
       this.graceLeft = graceMoves(result.score, this.random());
-      if (this.graceLeft === 0) return this.fail('no-mate');
+      failNow = this.graceLeft === 0;
     } else {
       this.graceLeft--;
       const clearMiss = result.score?.kind !== 'cp' || -result.score.value < CLEAR_MISS_CP;
-      if (this.graceLeft <= 0 || clearMiss) return this.fail('no-mate');
+      failNow = this.graceLeft <= 0 || clearMiss;
     }
 
     let reply = result.bestmove;
     if (reply === 'win') return this.fail('defender-win');
     // 詰みを読んでいても resign を返すことがある（ResignValue 等）。その場合は合法手から1つ選ぶ。
     // 詰みを逃したなら、詰まないと分かった応手で応じる（mini は王手以外の手を含む詰みを読むことがある）
-    if (escapes.length && !escapes.includes(reply)) reply = escapes[0];
+    if (escapes.length && !escapes.includes(reply)) reply = await this.bestEscape(pos, escapes);
     if (!legal.includes(reply)) reply = legal[0];
     this.push(reply);
     onDefenderMove?.(reply);
 
+    if (failNow) return this.fail('no-mate');
     if (this.isRepetition()) return this.fail('repetition');
     return this.toAttackerTurn();
+  }
+
+  /**
+   * 詰まない応手（escapes）のうち、攻方の評価が最も低くなる手（＝玉方にとっての最善）を選ぶ。
+   * 各応手の後の局面を短く探索して比べる。応手が1つなら探索しない。探索に失敗したら先頭の手。
+   */
+  private async bestEscape(pos: EnginePosition, escapes: readonly string[]): Promise<string> {
+    if (escapes.length === 1) return escapes[0];
+    let best = escapes[0];
+    let bestValue = Infinity;
+    try {
+      for (const escape of escapes.slice(0, ESCAPE_EVAL_MAX)) {
+        const r = await this.engine.think({ sfen: pos.sfen, moves: [...pos.moves, escape] }, ESCAPE_EVAL_MS);
+        const value = attackerValue(r.score);
+        if (value < bestValue) {
+          best = escape;
+          bestValue = value;
+        }
+      }
+    } catch {
+      return escapes[0];
+    }
+    return best;
   }
 
   private async toAttackerTurn(): Promise<SessionState> {
