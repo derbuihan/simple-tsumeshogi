@@ -7,6 +7,9 @@
  * 盤の裏の幽霊の音（ぱくっ・もぐもぐ・魂が抜ける・ため息）も同じように合成する。詰みの響きは連チャンで音程が上がる。
  */
 
+/** 全体の音量。音はすべてこの GainNode を通して出す（姉妹アプリと同じ作り）。今の音量のまま 1 にしている */
+const MASTER_GAIN = 1;
+
 /** 詰みの響きを上げる上限（半音）。8連で5度上になり、以後は変えない */
 const MAX_LIFT = 7;
 
@@ -34,10 +37,12 @@ export interface LandSound {
 
 export class Sound {
   private ctx: AudioContext | null = null;
+  private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
 
   constructor(public enabled: boolean) {
-    // ブラウザは操作の中でしか音を鳴らし始められないので、最初のタップで準備する
+    // ブラウザは操作の中でしか音を鳴らし始められないので、最初のタップで準備する。
+    // 電話などで中断されても再開できるよう、リスナーは外さない
     const unlock = () => {
       if (!this.enabled) return;
       this.context()?.resume().catch(() => undefined);
@@ -51,6 +56,9 @@ export class Sound {
     const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctor) return null;
     this.ctx = new Ctor();
+    this.master = this.ctx.createGain();
+    this.master.gain.value = MASTER_GAIN;
+    this.master.connect(this.ctx.destination);
     // ため息（約0.8秒）にも使うので、少し長めのノイズを作っておく
     const len = Math.round(this.ctx.sampleRate * 1);
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
@@ -108,7 +116,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-    osc.connect(g).connect(ctx.destination);
+    osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + 0.1);
     this.click(t, 3200, 0.02, vol * 0.4);
@@ -129,7 +137,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.5, t + 0.015);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.09);
-    src.connect(low).connect(g).connect(ctx.destination);
+    src.connect(low).connect(g).connect(this.master!);
     src.start(t, Math.random() * 0.5);
     src.stop(t + 0.1);
     this.thump(t, 110 + Math.random() * 30, 0.07, 0.25);
@@ -150,7 +158,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.04);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
-    osc.connect(g).connect(ctx.destination);
+    osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + 0.46);
   }
@@ -172,7 +180,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.22, t + 0.12);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(band).connect(g).connect(ctx.destination);
+    src.connect(band).connect(g).connect(this.master!);
     src.start(t);
     src.stop(t + dur + 0.01);
     const osc = ctx.createOscillator();
@@ -183,7 +191,7 @@ export class Sound {
     og.gain.setValueAtTime(0.0001, t + 0.05);
     og.gain.exponentialRampToValueAtTime(0.05, t + 0.15);
     og.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(og).connect(ctx.destination);
+    osc.connect(og).connect(this.master!);
     osc.start(t + 0.05);
     osc.stop(t + dur + 0.01);
   }
@@ -199,7 +207,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(band).connect(g).connect(ctx.destination);
+    src.connect(band).connect(g).connect(this.master!);
     src.start(t);
     src.stop(t + dur + 0.01);
   }
@@ -213,7 +221,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    osc.connect(g).connect(ctx.destination);
+    osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + dur + 0.01);
   }
@@ -227,7 +235,7 @@ export class Sound {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(vol, t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    osc.connect(g).connect(ctx.destination);
+    osc.connect(g).connect(this.master!);
     osc.start(t);
     osc.stop(t + dur + 0.01);
   }
