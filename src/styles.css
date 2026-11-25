@@ -1,15 +1,23 @@
 :root {
+  /* 色の名前は姉妹アプリ（simple-eigo / simple-whowhy）と揃えている（AGENTS.md）。色そのものはこのアプリ固有 */
   --bg: #f6f1e7;
-  --ink: #2b2118;
+  --surface: #fff;
+  --surface-2: #e8dfd0;
+  --text: #2b2118;
   --muted: #7a6a58;
-  --line: #3b2a17;
+  --border: #d6c8b4;
+  /* 盤の罫線と星 */
+  --board-line: #3b2a17;
   --wood: #e9c98b;
   --wood-dark: #d8b16a;
   --stand: #c99a55;
   --accent: #b5452b;
   --accent-ink: #fff;
-  --ok: #2e7d4f;
-  --ng: #b3261e;
+  --accent-soft: #fbe9e3;
+  --correct: #2e7d4f;
+  --correct-soft: color-mix(in srgb, var(--correct) 12%, transparent);
+  --wrong: #b3261e;
+  --wrong-soft: color-mix(in srgb, var(--wrong) 12%, transparent);
   --target: rgba(46, 125, 79, 0.38);
   --selected: rgba(181, 69, 43, 0.35);
   --last: rgba(255, 214, 102, 0.6);
@@ -20,13 +28,19 @@
   */
   --panel-min-h: 6.5rem;
   font-family: 'Hiragino Mincho ProN', 'Yu Mincho', 'Noto Serif JP', serif;
-  color: var(--ink);
+  color: var(--text);
   background: var(--bg);
   -webkit-tap-highlight-color: transparent;
 }
 
 * {
   box-sizing: border-box;
+}
+
+/* キーボード操作でフォーカスが見えるようにする（姉妹アプリと同じ 3px の枠） */
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
 }
 
 /*
@@ -101,7 +115,7 @@ button {
   color: var(--muted);
 }
 .badge {
-  background: var(--ink);
+  background: var(--text);
   color: var(--bg);
   border-radius: 999px;
   padding: 1px 8px;
@@ -181,7 +195,7 @@ button {
   line-height: 1.25;
   font-family: system-ui, sans-serif;
   font-weight: 700;
-  background: var(--ink);
+  background: var(--text);
   color: #fff;
   border-radius: 999px;
   min-width: 1.3em;
@@ -205,13 +219,13 @@ button {
   display: grid;
   grid-template-columns: repeat(9, var(--cell));
   grid-template-rows: repeat(9, var(--cell-h));
-  border: 2px solid var(--line);
+  border: 2px solid var(--board-line);
   /* 星（3・6筋と3・6段の交点）と木目 */
   background:
-    radial-gradient(circle at 33.333% 33.333%, var(--line) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 66.667% 33.333%, var(--line) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 33.333% 66.667%, var(--line) 0 2px, transparent 2.5px),
-    radial-gradient(circle at 66.667% 66.667%, var(--line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 33.333% 33.333%, var(--board-line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 66.667% 33.333%, var(--board-line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 33.333% 66.667%, var(--board-line) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 66.667% 66.667%, var(--board-line) 0 2px, transparent 2.5px),
     repeating-linear-gradient(92deg, rgba(120, 75, 20, 0.05) 0 3px, transparent 3px 11px),
     linear-gradient(170deg, #f0d193, #e5bd76);
 }
@@ -473,7 +487,7 @@ button {
   font-size: 1rem;
 }
 .status.error {
-  color: var(--ng);
+  color: var(--wrong);
 }
 .notice {
   font-size: 0.85rem;
@@ -491,20 +505,20 @@ button {
   text-align: center;
 }
 .mark.success {
-  color: var(--ok);
+  color: var(--correct);
 }
 .mark.failure {
-  color: var(--ng);
+  color: var(--wrong);
 }
 .step.missed {
-  color: var(--ng);
+  color: var(--wrong);
   font-weight: 700;
 }
 .result.success {
-  color: var(--ok);
+  color: var(--correct);
 }
 .result.failure {
-  color: var(--ng);
+  color: var(--wrong);
 }
 .sub {
   color: var(--muted);
@@ -548,8 +562,8 @@ button {
   color: var(--accent-ink);
 }
 .btn.secondary {
-  background: #fff;
-  border-color: #d6c8b4;
+  background: var(--surface);
+  border-color: var(--border);
 }
 .btn.ghost {
   background: transparent;
@@ -606,7 +620,7 @@ button {
 }
 .segmented {
   display: flex;
-  background: #e8dfd0;
+  background: var(--surface-2);
   border-radius: var(--radius);
   padding: 3px;
 }
@@ -620,7 +634,7 @@ button {
   cursor: pointer;
 }
 .segmented button.on {
-  background: #fff;
+  background: var(--surface);
   font-weight: 700;
 }
 .segmented button:disabled {
@@ -674,24 +688,24 @@ button {
   margin-left: 0;
 }
 .tag.success {
-  color: var(--ok);
+  color: var(--correct);
 }
 /* 達成（本当に起きたことだけ）。珍しい達成は金色にして光らせる */
-.feats {
+.feat-chips {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   gap: 6px;
 }
-.feat {
+.feat-chip {
   font-size: 0.85rem;
   font-weight: 700;
   padding: 3px 10px;
   border-radius: 999px;
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--correct);
+  background: var(--correct-soft);
 }
-.feat.rare {
+.feat-chip--rare {
   color: #7a5200;
   background: linear-gradient(110deg, #f7d978 0%, #fff3c4 45%, #f7d978 55%, #f0c64e 100%);
   background-size: 220% 100%;
@@ -712,7 +726,7 @@ button {
     0 8px 28px rgba(160, 110, 10, 0.35);
 }
 .tag.failure {
-  color: var(--ng);
+  color: var(--wrong);
 }
 .btn.main {
   min-height: 56px;
@@ -720,6 +734,8 @@ button {
 }
 .dialog {
   font-family: system-ui, sans-serif;
+  /* 開いたときにダイアログそのものへフォーカスを移す。枠は中のボタンにだけ出す */
+  outline: none;
   background: var(--bg);
   border-radius: 14px;
   padding: 16px;
@@ -761,7 +777,7 @@ button {
   background: #c9b9a2;
 }
 .sync[data-state='synced'] {
-  background: var(--ok);
+  background: var(--correct);
 }
 .sync[data-state='offline'] {
   background: #d08a2c;
@@ -773,10 +789,10 @@ button {
   color: var(--muted);
 }
 .status-unsolved {
-  color: var(--ng);
+  color: var(--wrong);
 }
 .status-solved {
-  color: var(--ok);
+  color: var(--correct);
 }
 
 /* 設定 */
@@ -811,15 +827,15 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid #d6c8b4;
-  background: #fff;
+  border: 1px solid var(--border);
+  background: var(--surface);
   border-radius: 999px;
   padding: 6px 10px;
   cursor: pointer;
 }
 .chip:has(input:checked) {
   border-color: var(--accent);
-  background: #fbe9e3;
+  background: var(--accent-soft);
 }
 .radio {
   display: flex;

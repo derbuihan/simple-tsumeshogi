@@ -98,6 +98,10 @@ export class App {
   private dialogOpenedAt = 0;
   /** 今出しているダイアログの HTML（同じなら置き直さず、出てくるアニメーションを繰り返さない） */
   private overlayHtml = '';
+  /** 今出しているダイアログ（aria-label）。開いた・閉じたの判定に使う */
+  private dialogLabel: string | null = null;
+  /** ダイアログを閉じたらフォーカスを戻す要素 */
+  private focusReturn: HTMLElement | null = null;
   /** 連チャン（盤の裏の幽霊が育つ）。アプリを開いている間だけ数え、保存しない */
   private streak = 0;
   /** この起動中に自力で解いた問題（再挑戦で同じ問題を解いても、連チャンは伸ばさない） */
@@ -168,12 +172,10 @@ export class App {
     };
     const observer = new ResizeObserver(fitBoard);
     for (const el of [this.root, header, this.panel]) observer.observe(el);
-    // PC では左右キーでも振り返りを操作できる
+    // Escape で一番上のダイアログを閉じる。PC では左右キーでも振り返りを操作できる
     window.addEventListener('keydown', (e) => {
-      const phase = this.phase;
-      if (phase.kind === 'result' && phase.dialog === 'open' && e.key === 'Escape') {
-        this.phase = { ...phase, dialog: 'closed' };
-        this.render();
+      if (e.key === 'Escape' && this.closeTopDialog()) {
+        e.preventDefault();
         return;
       }
       if (this.overlay.hidden === false) return;
@@ -638,6 +640,18 @@ export class App {
     this.render();
   }
 
+  /** 出ているダイアログをキャンセルと同じ扱いで閉じる。閉じるものが無ければ false */
+  private closeTopDialog(): boolean {
+    const phase = this.phase;
+    if (this.pendingPromotion) this.pendingPromotion = null;
+    else if (this.confirmGiveup) this.confirmGiveup = false;
+    else if (this.settingsOpen) this.settingsOpen = false;
+    else if (phase.kind === 'result' && phase.dialog === 'open') this.phase = { ...phase, dialog: 'closed' };
+    else return false;
+    this.render();
+    return true;
+  }
+
   /** 振り返りで、詰みを逃した手を表示しているか */
   private isMissedStep(): boolean {
     const phase = this.phase;
@@ -668,10 +682,12 @@ export class App {
   // ---- 描画 ----
 
   private render(): void {
+    // パネルなどを描き直すと押したボタンが消えるので、描き直す前のフォーカスを覚えておく
+    const focused = document.activeElement;
     this.renderHeader();
     this.renderBoard();
     this.renderPanel();
-    this.renderOverlay();
+    this.renderOverlay(focused);
   }
 
   private renderHeader(): void {
@@ -770,9 +786,9 @@ export class App {
         const missed = this.isMissedStep();
         html = `<div class="review-bar">
             <span class="mark ${success ? 'success' : 'failure'}" aria-label="${success ? '正解' : '不正解'}">${success ? '✓' : '✗'}</span>
-            <div class="segmented" role="tablist">
-              <button type="button" role="tab" class="${review.line === 'mine' ? 'on' : ''}" data-action="line-mine"${this.lastAttempt.length ? '' : ' disabled'}>あなたの手順</button>
-              <button type="button" role="tab" class="${review.line === 'model' ? 'on' : ''}" data-action="line-model">解答（${p?.length}手）</button>
+            <div class="segmented" role="tablist" aria-label="振り返る手順">
+              <button type="button" role="tab" aria-selected="${review.line === 'mine'}" class="${review.line === 'mine' ? 'on' : ''}" data-action="line-mine"${this.lastAttempt.length ? '' : ' disabled'}>あなたの手順</button>
+              <button type="button" role="tab" aria-selected="${review.line === 'model'}" class="${review.line === 'model' ? 'on' : ''}" data-action="line-model">解答（${p?.length}手）</button>
             </div>
             <span class="step${missed ? ' missed' : ''}"${missed ? ' title="この手で詰みを逃しました"' : ''}>${missed ? '▲' : ''}${review.step}/${line.length}手</span>
           </div>
@@ -787,14 +803,44 @@ export class App {
     this.panel.dataset.phase = phase.kind;
   }
 
-  private renderOverlay(): void {
+  private renderOverlay(focused: Element | null): void {
+    this.drawOverlay();
+    this.syncDialogFocus(focused);
+  }
+
+  /**
+   * ダイアログを開いたらダイアログへフォーカスを移し、すべて閉じたら開く前の場所へ戻す。
+   * 開いたきっかけのボタンが描き直されて無くなっていたら、同じ data-action のボタンへ戻す
+   */
+  private syncDialogFocus(focused: Element | null): void {
+    const dialog = this.overlay.hidden ? null : this.overlay.querySelector<HTMLElement>('[role="dialog"]');
+    const label = dialog?.getAttribute('aria-label') ?? null;
+    const changed = label !== this.dialogLabel;
+    if (dialog && !this.dialogLabel) {
+      this.focusReturn = focused instanceof HTMLElement && focused !== document.body ? focused : null;
+    }
+    this.dialogLabel = label;
+    if (dialog) {
+      // 開いた直後か、描き直しでフォーカスしていた要素が消えたとき
+      if (changed || !this.overlay.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+      return;
+    }
+    const back = this.focusReturn;
+    this.focusReturn = null;
+    if (!changed || !back) return;
+    const action = back.dataset.action;
+    const target = back.isConnected ? back : action ? this.root.querySelector<HTMLElement>(`[data-action="${action}"]`) : null;
+    target?.focus({ preventScroll: true });
+  }
+
+  private drawOverlay(): void {
     if (this.pendingPromotion && this.problem) {
       const mv = parseUsiMove(this.pendingPromotion.plain);
       const position = this.session?.position ?? parseSfen(this.problem.sfen);
       const piece = mv.kind === 'move' ? position.board[mv.from] : null;
       const plainChar = piece ? pieceChar(piece) : '';
       const promChar = piece ? pieceChar({ ...piece, promoted: true }) : '';
-      this.overlay.innerHTML = `<div class="dialog" role="dialog" aria-label="成りますか">
+      this.overlay.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" tabindex="-1" aria-label="成りますか">
           <p>成りますか？</p>
           <div class="promote-choices">
             <button type="button" class="btn primary big" data-action="promote-yes"><span class="pc">${promChar}</span>成る</button>
@@ -804,7 +850,7 @@ export class App {
         </div>`;
       this.overlay.hidden = false;
     } else if (this.confirmGiveup) {
-      this.overlay.innerHTML = `<div class="dialog" role="dialog" aria-label="解答を表示しますか">
+      this.overlay.innerHTML = `<div class="dialog" role="dialog" aria-modal="true" tabindex="-1" aria-label="解答を表示しますか">
           <p><strong>解答を表示しますか？</strong></p>
           <p class="sub">この挑戦はギブアップとして記録されます。</p>
           <div class="actions">
@@ -841,17 +887,17 @@ export class App {
       const shortest = p ? result.moves <= p.length : true;
       const tag = this.viewedAnswer ? '解答閲覧後' : shortest ? '最短' : `最短は${p?.length}手`;
       const rare = result.feats.some((f) => f.rare);
-      const feats = result.feats.map((f) => `<span class="feat${f.rare ? ' rare' : ''}">${escapeHtml(f.label)}</span>`).join('');
-      return `<div class="dialog result-card${rare ? ' rare' : ''}" role="dialog" aria-label="正解">
+      const feats = result.feats.map((f) => `<span class="feat-chip${f.rare ? ' feat-chip--rare' : ''}">${escapeHtml(f.label)}</span>`).join('');
+      return `<div class="dialog result-card${rare ? ' rare' : ''}" role="dialog" aria-modal="true" tabindex="-1" aria-label="正解">
           <p class="result success">✓ ${result.moves}手で詰みました</p>
           <p><span class="tag success">${tag}</span></p>
-          ${feats ? `<p class="feats">${feats}</p>` : ''}
+          ${feats ? `<p class="feat-chips">${feats}</p>` : ''}
           ${btn('next', '次の問題 →', 'primary main')}
           <div class="actions">${btn('retry', '再挑戦', 'secondary')}${btn('review', '振り返る', 'secondary')}</div>
         </div>`;
     }
     const at = result.missedAt ? `<p><span class="tag failure">${result.missedAt}手目</span></p>` : '';
-    return `<div class="dialog result-card" role="dialog" aria-label="不正解">
+    return `<div class="dialog result-card" role="dialog" aria-modal="true" tabindex="-1" aria-label="不正解">
         <p class="result failure">✗ ${FAILURE_TEXT[result.reason]}</p>
         ${at}
         ${btn('retry', '再挑戦', 'primary main')}
@@ -871,7 +917,7 @@ export class App {
         (o) => `<label class="radio"><input type="radio" name="order" value="${o}"${s.order === o ? ' checked' : ''}>${ORDER_LABELS[o]}${o === 'untried' ? '（おすすめ）' : ''}</label>`,
       )
       .join('');
-    return `<form class="dialog settings" role="dialog" aria-label="出題設定" onsubmit="return false">
+    return `<form class="dialog settings" role="dialog" aria-modal="true" tabindex="-1" aria-label="出題設定" onsubmit="return false">
         <h2>出題設定</h2>
         <fieldset><legend>出題する手数</legend><div class="chips">${lengths}</div></fieldset>
         <fieldset><legend>出題順序</legend>${orders}</fieldset>
