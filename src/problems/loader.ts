@@ -20,6 +20,10 @@ export function loadIndex(): Promise<ProblemIndex> {
   indexPromise ??= fetch(INDEX_URL).then((r) => {
     if (!r.ok) throw new Error(`failed to load problem index: ${r.status}`);
     return r.json();
+  }).catch((error) => {
+    // 一時的な通信エラーの後、「次の問題」で索引を取り直せるようにする。
+    indexPromise = null;
+    throw error;
   });
   return indexPromise;
 }
